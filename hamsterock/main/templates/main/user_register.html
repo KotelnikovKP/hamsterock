@@ -1,0 +1,77 @@
+{% extends 'main/base.html' %}
+
+{% block scripts %}
+<script>
+function toggle_is_join_to_parent_budget(f) {
+    if (f.is_join_to_parent_budget.checked) {
+        f.name.required = 0;
+        f.name.disabled = 1;
+        f.base_currency_1.required = 0;
+        f.base_currency_1.disabled = 1;
+        f.base_currency_2.required = 0;
+        f.base_currency_2.disabled = 1;
+        f.secret_key.required = 1;
+        f.secret_key.disabled = 0
+    } else {
+        f.name.required = 1;
+        f.name.disabled = 0;
+        f.base_currency_1.required = 1;
+        f.base_currency_1.disabled = 0;
+        f.base_currency_2.required = 1;
+        f.base_currency_2.disabled = 0;
+        f.secret_key.required = 0;
+        f.secret_key.disabled = 1
+    }
+}
+</script>
+
+{% endblock %}
+
+
+{% block content %}
+<h1>{{title}}</h1>
+
+<form action="{% url 'register' %}" method="post" enctype="multipart/form-data">
+    {% csrf_token %}
+
+    <div class="form-error">{{ form.non_field_errors }}</div>
+    <div class="form-error">{{ profile_form.non_field_errors }}</div>
+
+    {% for f in form %}
+    <p class="form-p"><label class="form-label" for="{{ f.id_for_label }}">{{ f.label }}: </label>{{ f }}</p>
+    <div class="form-error">{{ f.errors }}</div>
+    {% endfor %}
+
+    {% for pf in profile_form %}
+        {% if pf.id_for_label != "id_user" and pf.id_for_label != "id_budget" %}
+    <p class="form-p"><label class="form-label" for="{{ pf.id_for_label }}">{{ pf.label }}: </label>{{ pf }}</p>
+            {% if pf.help_text %}
+    <p class="form-p-help"><label class="form-label-help" for="{{ pf.id_for_label }}">{{ pf.help_text }}</label></p>
+            {% endif %}
+    <div class="form-error">{{ pf.errors }}</div>
+        {% endif %}
+    {% endfor %}
+
+    <p> </p>
+    <div class="article-panel">
+        <p class="first">Настройки бюджета:</p>
+    </div>
+    {% for bf in budget_form %}
+        {% if bf.id_for_label != "id_user" %}
+            {% if bf.id_for_label == "id_is_join_to_parent_budget" %}
+    <p> </p>
+    <hr>
+            {% endif %}
+    <p class="form-p"><label class="form-label" for="{{ bf.id_for_label }}">{{ bf.label }}: </label>{{ bf }}</p>
+            {% if bf.help_text %}
+    <p class="form-p-help"><label class="form-label-help" for="{{ bf.id_for_label }}">{{ bf.help_text }}</label></p>
+            {% endif %}
+    <div class="form-error">{{ bf.errors }}</div>
+        {% endif %}
+    {% endfor %}
+
+    <p> </p>
+    <button type="submit">Регистрация</button>
+</form>
+
+{% endblock %}

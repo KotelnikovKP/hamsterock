@@ -1,3 +1,5 @@
+from decimal import Decimal
+
 from django.core.paginator import Paginator, EmptyPage
 
 
@@ -11,6 +13,23 @@ def get_u_context(request, initial_context):
         if context['username'] == ' ':
             context['username'] = request.user.username
     context['is_staff'] = request.user.is_staff
+
+    if hasattr(request.user, 'profile'):
+        context['avatar'] = request.user.profile.get_url_avatar()
+
+        context['budget'] = request.user.profile.budget
+        if request.user.profile.budget:
+            context['is_has_budget'] = True
+            if request.user.profile.budget.user == request.user:
+                context['is_owner_budget'] = True
+            else:
+                context['is_owner_budget'] = False
+
+        pass
+
+    else:
+        context['is_has_budget'] = False
+        context['is_owner_budget'] = False
 
     return context
 
@@ -32,3 +51,11 @@ class DataMixin:
 
     def get_user_context(self, **kwargs):
         return get_u_context(self.request, kwargs)
+
+
+def ftod(val, prec=15):
+    if val is None:
+        val = 0.00
+    return Decimal(val).quantize(Decimal(10) ** -prec)
+
+

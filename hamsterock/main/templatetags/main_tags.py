@@ -38,6 +38,8 @@ def show_main_menu(is_authenticated=False, username='', is_staff=None, avatar=No
                              'url_suffix_2': first_base_currency},
                             {'title': "О сервисе", 'url_name': 'about'},
                             ]
+            menu = [{'title': "О сервисе", 'url_name': 'about'},
+                    ]
         else:
             menu = [{'title': "Начать вести бюджет", 'url_name': 'start_budget'},
                     {'title': "О сервисе", 'url_name': 'about'},

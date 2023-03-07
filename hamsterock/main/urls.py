@@ -10,4 +10,5 @@ urlpatterns = [
     path('logout/', logout_user, name='logout'),
     path('password-change/', PasswordChange.as_view(), name='password_change'),
     path('password-change/done/', PasswordChangeDone.as_view(), name='password_change_done'),
+    path('register/', register, name='register'),
 ]

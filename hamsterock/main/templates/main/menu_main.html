@@ -28,12 +28,7 @@
       <li class="avatar"><a href="{% url 'home' %}">{{ avatar }}</a></li>
           {% endif %}
       {% else %}
-
-{% comment %}
       <li class="last"><a href="{% url 'register' %}">Регистрация</a> | <a href="{% url 'login' %}">Войти</a></li>
-{% endcomment %}
-
-      <li class="last"><a href="{% url 'home' %}">Регистрация</a> | <a href="{% url 'login' %}">Войти</a></li>
       {% endif %}
    </ul>
    <div class="clear"></div>

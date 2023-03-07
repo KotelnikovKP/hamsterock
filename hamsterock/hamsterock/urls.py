@@ -18,8 +18,7 @@ from django.contrib import admin
 from django.urls import path, include
 
 from hamsterock import settings
-from main.views import page_permission_denied, page_not_found
-
+from main.views import page_permission_denied, page_not_found, page_response_server_error
 
 urlpatterns = [
     path('admin/', admin.site.urls),
@@ -36,4 +35,5 @@ if settings.DEBUG:
 
 handler403 = page_permission_denied
 handler404 = page_not_found
+handler500 = page_response_server_error
 
