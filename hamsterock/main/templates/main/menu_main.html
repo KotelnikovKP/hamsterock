@@ -1,0 +1,40 @@
+<div class="header">
+   <ul id="mainmenu" class="mainmenu">
+      <li class="logo"><a href="{% url 'home' %}"><div class="logo"></div></a></li>
+      {% for m in menu %}
+          {% if m.url_suffix is not None %}
+              {% if m.url_suffix_2 is not None %}
+      <li><a href="{% url m.url_name m.url_suffix m.url_suffix_2 %}">{{m.title}}</a></li>
+              {% else %}
+      <li><a href="{% url m.url_name m.url_suffix %}">{{m.title}}</a></li>
+              {% endif %}
+          {% else %}
+      <li><a href="{% url m.url_name %}">{{m.title}}</a></li>
+          {% endif %}
+      {% endfor %}
+      {% if is_authenticated %}
+
+{% comment %}
+      <li class="last"> <a href="{% url 'edit_user' %}">{{ username }}</a> | <a href="{% url 'logout' %}">Выйти</a></li>
+{% endcomment %}
+
+      <li class="last"> <a href="{% url 'home' %}">{{ username }}</a> | <a href="{% url 'logout' %}">Выйти</a></li>
+          {% if avatar %}
+
+{% comment %}
+      <li class="avatar"><a href="{% url 'edit_user' %}">{{ avatar }}</a></li>
+{% endcomment %}
+
+      <li class="avatar"><a href="{% url 'home' %}">{{ avatar }}</a></li>
+          {% endif %}
+      {% else %}
+
+{% comment %}
+      <li class="last"><a href="{% url 'register' %}">Регистрация</a> | <a href="{% url 'login' %}">Войти</a></li>
+{% endcomment %}
+
+      <li class="last"><a href="{% url 'home' %}">Регистрация</a> | <a href="{% url 'login' %}">Войти</a></li>
+      {% endif %}
+   </ul>
+   <div class="clear"></div>
+</div>

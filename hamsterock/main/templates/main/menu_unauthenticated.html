@@ -1,0 +1,15 @@
+{% if selected_menu == 'login' %}
+<li class="selected">Войти</li>
+{% else %}
+<li><a href="{% url 'login' %}">Войти</a></li>
+{% endif %}
+
+{% comment %}
+
+{% if selected_menu == 'register' %}
+<li class="selected">Регистрация</li>
+{% else %}
+<li><a href="{% url 'register' %}">Регистрация</a></li>
+{% endif %}
+
+{% endcomment %}

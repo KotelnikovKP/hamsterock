@@ -1,0 +1,19 @@
+#header {
+    background: #3F4137;
+}
+
+.module caption  {
+    background: #eee;
+}
+
+#nav-sidebar .current-app .section:link,
+#nav-sidebar .current-app .section:visited {
+    color: #555;
+    font-weight: bold;
+}
+
+a.section, a.section:link, a.section:visited, .section, .section:link, .section:visited  {
+    color: #555;
+    font-weight: bold;
+}
+

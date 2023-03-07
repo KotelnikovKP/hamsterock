@@ -1,0 +1,66 @@
+{% comment %}
+
+{% if selected_menu == 'edit_user' %}
+<li class="selected">Профиль пользователя</li>
+{% else %}
+<li><a href="{% url 'edit_user' %}">Профиль пользователя</a></li>
+{% endif %}
+
+{% endcomment %}
+
+{% if selected_menu == 'password_change' %}
+<li class="selected">Смена пароля</li>
+{% else %}
+<li><a href="{% url 'password_change' %}">Смена пароля</a></li>
+{% endif %}
+
+{% comment %}
+
+{% if is_has_budget %}
+    {% if is_owner_budget %}
+
+        {% if selected_menu == 'edit_budget' %}
+<li class="selected">Настройки бюджета</li>
+        {% else %}
+<li><a href="{% url 'edit_budget' %}">Настройки бюджета</a></li>
+        {% endif %}
+
+        {% if selected_menu == 'budget_users' %}
+<li class="selected">Пользователи бюджета</li>
+        {% else %}
+<li><a href="{% url 'budget_users' %}">Пользователи бюджета</a></li>
+        {% endif %}
+
+        {% if selected_menu == 'delete_budget' %}
+<li class="selected">Удалить бюджет</li>
+        {% else %}
+<li><a href="{% url 'remove_user_from_budget' user.pk selected_menu %}">Удалить бюджет</a></li>
+        {% endif %}
+
+    {% else %}
+
+        {% if selected_menu == 'show_budget' %}
+<li class="selected">Настройки бюджета</li>
+        {% else %}
+<li><a href="{% url 'show_budget' %}">Настройки бюджета</a></li>
+        {% endif %}
+
+        {% if selected_menu == 'delete_budget' %}
+<li class="selected">Выйти из бюджета</li>
+        {% else %}
+<li><a href="{% url 'remove_user_from_budget' user.pk selected_menu %}">Выйти из бюджета</a></li>
+        {% endif %}
+
+    {% endif %}
+
+{% else %}
+
+    {% if selected_menu == 'start_budget' %}
+<li class="selected">Начать вести бюджет</li>
+    {% else %}
+<li><a href="{% url 'start_budget' %}">Начать вести бюджет</a></li>
+    {% endif %}
+
+{% endif %}
+
+{% endcomment %}
