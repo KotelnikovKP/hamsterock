@@ -49,7 +49,6 @@ def show_main_menu(is_authenticated=False, username='', is_staff=None, avatar=No
     else:
         menu = [{'title': "О сервисе", 'url_name': 'about'},
                 ]
-    # print(menu)
 
     return {"menu": menu, "is_authenticated": is_authenticated, "username": username, "is_staff": is_staff,
             "avatar": avatar}

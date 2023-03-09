@@ -13,19 +13,9 @@
           {% endif %}
       {% endfor %}
       {% if is_authenticated %}
-
-{% comment %}
       <li class="last"> <a href="{% url 'edit_user' %}">{{ username }}</a> | <a href="{% url 'logout' %}">Выйти</a></li>
-{% endcomment %}
-
-      <li class="last"> <a href="{% url 'home' %}">{{ username }}</a> | <a href="{% url 'logout' %}">Выйти</a></li>
           {% if avatar %}
-
-{% comment %}
       <li class="avatar"><a href="{% url 'edit_user' %}">{{ avatar }}</a></li>
-{% endcomment %}
-
-      <li class="avatar"><a href="{% url 'home' %}">{{ avatar }}</a></li>
           {% endif %}
       {% else %}
       <li class="last"><a href="{% url 'register' %}">Регистрация</a> | <a href="{% url 'login' %}">Войти</a></li>

@@ -1,0 +1,26 @@
+{% extends 'main/base.html' %}
+
+{% block content %}
+<h1>{{title}}</h1>
+
+<form method="post" enctype="multipart/form-data">
+    {% csrf_token %}
+
+    <div class="form-error">{{ user_form.non_field_errors }}</div>
+    <div class="form-error">{{ profile_form.non_field_errors }}</div>
+
+    {% for f in user_form %}
+    <p class="form-p"><label class="form-label" for="{{ f.id_for_label }}">{{ f.label }}: </label>{{ f }}</p>
+    <div class="form-error">{{ f.errors }}</div>
+    {% endfor %}
+    {% for pf in profile_form %}
+    <p class="form-p"><label class="form-label" for="{{ pf.id_for_label }}">{{ pf.label }}: </label>{{ pf }}</p>
+    <div class="form-error">{{ pf.errors }}</div>
+    {% endfor %}
+
+    <p> </p>
+    <button type="submit">Сохранить изменения профиля</button>
+
+</form>
+
+{% endblock %}

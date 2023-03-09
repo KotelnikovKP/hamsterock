@@ -1,0 +1,19 @@
+{% extends 'main/base.html' %}
+
+{% block content %}
+<h1>{{title}}</h1>
+
+<form method="post">
+    {% csrf_token %}
+
+    {% if removed_user == budget_owner %}
+    <p>Удалить бюджет <strong>{{ budget_name }}</strong>?</p>
+    <button type="submit">Удалить бюджет</button> <button type="button" class="return-button" onClick="history.back()">Отмена</button>
+    {% else %}
+    <p>Отключить пользователя <strong>{{ removed_user_name }}</strong> от бюджета <strong>{{ budget_name }}</strong>?</p>
+    <button type="submit">Отключить пользователя</button> <button type="button" class="return-button" onClick="history.back()">Отмена</button>
+    {% endif %}
+
+</form>
+
+{% endblock %}

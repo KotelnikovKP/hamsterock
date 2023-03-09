@@ -1,20 +1,14 @@
-{% comment %}
-
 {% if selected_menu == 'edit_user' %}
 <li class="selected">Профиль пользователя</li>
 {% else %}
 <li><a href="{% url 'edit_user' %}">Профиль пользователя</a></li>
 {% endif %}
 
-{% endcomment %}
-
 {% if selected_menu == 'password_change' %}
 <li class="selected">Смена пароля</li>
 {% else %}
 <li><a href="{% url 'password_change' %}">Смена пароля</a></li>
 {% endif %}
-
-{% comment %}
 
 {% if is_has_budget %}
     {% if is_owner_budget %}
@@ -62,5 +56,3 @@
     {% endif %}
 
 {% endif %}
-
-{% endcomment %}

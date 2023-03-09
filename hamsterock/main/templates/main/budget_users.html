@@ -1,0 +1,24 @@
+{% extends 'main/base.html' %}
+
+{% block content %}
+<ul class="list-articles">
+   <h1>{{ title }}</h1>
+   {% for u in list_users %}
+   <li>
+      {% if u.profile.avatar %}
+      <p><a href="{{ u.profile.avatar.url }}"><img class="img-article-left thumb" src="{{ u.profile.avatar.url }}"></a></p>
+      {% endif %}
+      {% if u == owner %}
+      <p><strong>Владелец бюджета</strong></p>
+      {% endif %}
+      <p>Имя пользователя: <strong>{{ u.username }}</strong></p>
+      <p>Имя Фамилия: <strong>{{ u.first_name }} {{ u.last_name }}</strong></p>
+      <p>Дата рождения: <strong>{{ u.profile.date_of_birth }}</strong></p>
+      {% if u != owner %}
+      <a href="{% url 'remove_user_from_budget' u.pk 'budget_users' %}"><input type="button" value="Отключить пользователя от бюджета"></a>
+      {% endif %}
+      <div class="clear"></div>
+   </li>
+   {% endfor %}
+</ul>
+{% endblock %}

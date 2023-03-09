@@ -1,0 +1,55 @@
+{% extends 'main/base.html' %}
+
+{% block scripts %}
+<script>
+function toggle_is_join_to_parent_budget(f) {
+    if (f.is_join_to_parent_budget.checked) {
+        f.name.required = 0;
+        f.name.disabled = 1;
+        f.base_currency_1.required = 0;
+        f.base_currency_1.disabled = 1;
+        f.base_currency_2.required = 0;
+        f.base_currency_2.disabled = 1;
+        f.secret_key.required = 1;
+        f.secret_key.disabled = 0
+    } else {
+        f.name.required = 1;
+        f.name.disabled = 0;
+        f.base_currency_1.required = 1;
+        f.base_currency_1.disabled = 0;
+        f.base_currency_2.required = 1;
+        f.base_currency_2.disabled = 0;
+        f.secret_key.required = 0;
+        f.secret_key.disabled = 1
+    }
+}
+</script>
+{% endblock %}
+
+
+{% block content %}
+<h1>{{title}}</h1>
+
+<form action="{% url 'start_budget' %}" method="post" enctype="multipart/form-data">
+    {% csrf_token %}
+
+    <div class="form-error">{{ budget_form.non_field_errors }}</div>
+
+    {% for bf in budget_form %}
+        {% if bf.id_for_label != "id_user" %}
+            {% if bf.id_for_label == "id_is_join_to_parent_budget" %}
+    <hr>
+            {% endif %}
+    <p class="form-p"><label class="form-label" for="{{ bf.id_for_label }}">{{ bf.label }}: </label>{{ bf }}</p>
+            {% if bf.help_text %}
+    <p class="form-p-help"><label class="form-label-help" for="{{ bf.id_for_label }}">{{ bf.help_text }}</label></p>
+            {% endif %}
+    <div class="form-error">{{ bf.errors }}</div>
+        {% endif %}
+    {% endfor %}
+
+    <p> </p>
+    <button type="submit">Начать вести бюджет</button>
+</form>
+
+{% endblock %}
