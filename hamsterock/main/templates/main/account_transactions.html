@@ -1,0 +1,21 @@
+{% extends 'main/base.html' %}
+{% load main_tags %}
+{% load static %}
+
+{% block content %}
+<h1>{{title}}</h1>
+<p>
+{% if account_credit_limit != 0 %}
+    <label class="form-label" style="min-width: 100px" for="id_available_balance">Доступный остаток (<strong>{{ account_currency_iso }}</strong>): </label>
+    <input id="id_available_balance" type="text" name="available_balance" value="{{ account_available_balance|floatformat:"2g" }}" class="form-input-small" readonly id="id_available_balance">&ensp;
+    <label class="form-label" style="min-width: 100px" for="id_balance">Истинный остаток (<strong>{{ account_currency_iso }}</strong>): </label>
+    <input id="id_balance" type="text" name="balance" value="{{ account_balance|floatformat:"2g" }}" class="form-input-small" readonly id="id_balance">&ensp;
+    <label class="form-label" style="min-width: 100px" for="id_credit_limit">Кредитный лимит (<strong>{{ account_currency_iso }}</strong>): </label>
+    <input id="id_credit_limit" type="text" name="credit_limit" value="{{ account_credit_limit|floatformat:"2g" }}" class="form-input-small" readonly id="id_credit_limit">
+{% else %}
+    <label class="form-label" for="id_available_balance">Доступный остаток (<strong>{{ account_currency_iso }}</strong>): </label>
+    <input type="text" name="available_balance" value="{{ account_available_balance|floatformat:"2g" }}" class="form-input-small" readonly id="id_available_balance">
+{% endif %}
+</p>
+
+{% endblock %}

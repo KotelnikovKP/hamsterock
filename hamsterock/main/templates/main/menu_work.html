@@ -1,0 +1,80 @@
+{% load main_tags %}
+{% load static %}
+
+{% if selected_menu == 'account_transactions' %}
+<li><p>Счета и кошельки</p></li>
+<hr>
+   {% for a in accounts %}
+      {% if a.pk == account_selected %}
+         {% if is_owner_budget %}
+<li class="selected">{% if not a.is_balances_valid %}<span style="color: #CC0000">! </span>{% endif %}{{ a.name }} ({{ a.currency.iso_code }}) <a href="{{ a.get_absolute_url }}"><img src="{% static 'main/images/edit.png' %}" style="max-height:16px"></a> <a href="{{ a.get_delete_url }}"><img src="{% static 'main/images/delete.png' %}" style="max-height:16px"></a></li>
+         {% else %}
+<li class="selected">{% if not a.is_balances_valid %}<span style="color: #CC0000">! </span>{% endif %}{{ a.name }} ({{ a.currency.iso_code }})</li>
+         {% endif %}
+      {% else %}
+         {% if is_owner_budget %}
+<li>{% if not a.is_balances_valid %}<span style="color: #CC0000">! </span>{% endif %}<a href="{{ a.get_transactions_url }}">{{ a.name }} ({{ a.currency.iso_code }}) </a><a href="{{ a.get_absolute_url }}"><img src="{% static 'main/images/edit.png' %}" style="max-height:16px"></a> <a href="{{ a.get_delete_url }}"><img src="{% static 'main/images/delete.png' %}" style="max-height:16px"></a></li>
+         {% else %}
+<li>{% if not a.is_balances_valid %}<span style="color: #CC0000">! </span>{% endif %}<a href="{{ a.get_transactions_url }}">{{ a.name }} ({{ a.currency.iso_code }})</a></li>
+         {% endif %}
+      {% endif %}
+   {% endfor %}
+   {% if is_owner_budget %}
+<hr>
+<li><a href="{% url 'add_account' %}">Добавить счет/кошелек</a></li>
+<p> </p>
+<hr style="height: 2px;">
+
+{% comment %}
+
+      {% if account_selected == -2 %}
+<li class="selected">Объекты бюджета</li>
+      {% else %}
+<li><a href="{% url 'budget_objects' %}">Объекты бюджета</a></li>
+      {% endif %}
+<p> </p>
+<hr style="height: 2px;">
+      {% if account_selected == -1 %}
+<li class="selected">Проекты</li>
+      {% else %}
+<li><a href="{% url 'projects' %}">Проекты</a></li>
+      {% endif %}
+
+{% endcomment %}
+
+   {% endif %}
+{% endif %}
+
+{% comment %}
+
+{% if selected_menu == 'annual_budget' %}
+<li><p>Бюджеты по годам</p></li>
+<hr>
+   {% for y in budget_years %}
+      {% for c in base_currencies %}
+         {% if y == budget_year_selected and c.pk == base_currency_selected %}
+<li class="selected">Бюджет {{ y }} г. в {{ c.iso_code }}</li>
+         {% else %}
+<li><a href="{% url 'annual_budget' y c.pk %}">Бюджет {{ y }} г. в {{ c.iso_code }}</a></li>
+         {% endif %}
+      {% endfor %}
+<hr>
+   {% endfor %}
+{% endif %}
+
+{% if selected_menu == 'current_state' %}
+<li><p>Месяц и валюта</p></li>
+<hr>
+   {% for ms in month_shifts %}
+      {% for c in base_currencies %}
+         {% if ms == month_shift_selected and c.pk == base_currency_selected %}
+<li class="selected">{% get_month_shift_name ms %} {{ c.iso_code }}</li>
+         {% else %}
+<li><a href="{% url 'current_state' c.pk ms %}">{% get_month_shift_name ms %} {{ c.iso_code }}</a></li>
+         {% endif %}
+      {% endfor %}
+<hr>
+   {% endfor %}
+{% endif %}
+
+{% endcomment %}

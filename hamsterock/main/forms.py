@@ -300,3 +300,47 @@ class RemoveUserFromBudgetForm(forms.Form):
     pass
 
 
+class AddAccountForm(forms.ModelForm):
+    class Meta:
+        model = Account
+        fields = ['type', 'name', 'currency', 'credit_limit', 'initial_balance', 'time_zone']
+        widgets = {
+            'type': forms.Select(attrs={'class': 'form-input'}),
+            'name': forms.TextInput(attrs={'class': 'form-input'}),
+            'currency': forms.Select(attrs={'class': 'form-input'}),
+            'credit_limit': forms.NumberInput(attrs={'class': 'form-input', 'value': '0.00', 'step': '0.01'}),
+            'initial_balance': forms.NumberInput(attrs={'class': 'form-input', 'value': '0.00', 'step': '0.01'}),
+            'time_zone': forms.Select(attrs={'class': 'form-input'}),
+        }
+
+    def __init__(self, *args, **kwargs):
+        super(AddAccountForm, self).__init__(*args, **kwargs)
+        self.fields['currency'].queryset = Currency.objects.filter(is_frequently_used=1)
+        self.fields['currency'].empty_label = '<валюта не выбрана>'
+        self.fields['credit_limit'].help_text = 'ВАЖНО! Укажите установленный банком кредитный лимит (лимит ' \
+                                                'овердрафта). Действует для кредитных счетов/крат. '
+        self.fields['initial_balance'].help_text = 'ВАЖНО! Укажите остаток по счету/кошельку на утро даты, ' \
+                                                   'с которой будут загружены операции по нему в систему '
+
+
+class EditAccountForm(forms.ModelForm):
+    class Meta:
+        model = Account
+        fields = ['type', 'name', 'balance', 'credit_limit', 'initial_balance', 'time_zone']
+        widgets = {
+            'type': forms.Select(attrs={'class': 'form-input'}),
+            'name': forms.TextInput(attrs={'class': 'form-input'}),
+            'balance': forms.NumberInput(attrs={'class': 'form-input', 'readonly': 'readonly', 'step': '0.01'}),
+            'credit_limit': forms.NumberInput(attrs={'class': 'form-input', 'step': '0.01'}),
+            'initial_balance': forms.NumberInput(attrs={'class': 'form-input', 'step': '0.01'}),
+            'time_zone': forms.Select(attrs={'class': 'form-input'}),
+        }
+
+    def __init__(self, *args, **kwargs):
+        super(EditAccountForm, self).__init__(*args, **kwargs)
+        self.fields['credit_limit'].help_text = 'ВАЖНО! Укажите установленный банком кредитный лимит (лимит ' \
+                                                'овердрафта). Действует для кредитных счетов/крат. '
+        self.fields['initial_balance'].help_text = 'ВАЖНО! Укажите остаток по счету/кошельку на утро даты, ' \
+                                                   'с которой будут загружены операции по нему в систему '
+
+

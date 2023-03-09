@@ -1,0 +1,20 @@
+{% extends 'main/base.html' %}
+
+{% block content %}
+<h1>{{title}}</h1>
+{% if error_message %}
+<form>
+    {% csrf_token %}
+    <div class="form-error">{{ error_message }}</div>
+    <p> </p>
+    <a href="{% url 'account_transactions' account_selected %}"><input type="button" value="Возврат"></a>
+</form>
+{% else %}
+<form method="post">
+    {% csrf_token %}
+    <p>Удалить счет/кошелек <strong>{{ account.name }} ({{ account.currency.iso_code }})</strong>?</p>
+    <button type="submit">Удалить счет/кошелек</button> <a href="{% url 'account_transactions' account_selected %}"><input type="button" value="Отмена"></a>
+</form>
+{% endif %}
+
+{% endblock %}

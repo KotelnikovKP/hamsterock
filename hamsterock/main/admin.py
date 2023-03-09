@@ -53,3 +53,14 @@ class BudgetAdmin(admin.ModelAdmin):
 admin.site.register(Budget, BudgetAdmin)
 
 
+class CurrencyRateAdmin(admin.ModelAdmin):
+    list_display = ['currency_1', 'currency_2', 'date_rate', 'rate']
+    list_display_links = ('currency_1', 'currency_2', )
+    search_fields = ('currency_1', 'currency_2', 'date_rate')
+    fields = ('currency_1', 'currency_2', 'date_rate', 'rate')
+    save_on_top = True
+    list_filter = ('currency_1',)
+
+
+admin.site.register(CurrencyRate, CurrencyRateAdmin)
+

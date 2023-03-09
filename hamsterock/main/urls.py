@@ -18,4 +18,9 @@ urlpatterns = [
     path('budget_users/', budget_users, name='budget_users'),
     path('remove_user_from_budget/<int:user_id>/<path:return_url>/', remove_user_from_budget,
          name='remove_user_from_budget'),
+    path('no_account/', no_account, name='no_account'),
+    path('add_account/', AddAccount.as_view(), name='add_account'),
+    path('edit_account/<int:account_id>/', EditAccount.as_view(), name='edit_account'),
+    path('delete_account/<int:account_id>/', DeleteAccount.as_view(), name='delete_account'),
+    path('account_transactions/<int:account_id>/', account_transactions, name='account_transactions'),
 ]

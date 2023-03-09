@@ -2,13 +2,14 @@ from uuid import uuid4
 
 from django.contrib.auth import logout, login
 from django.contrib.auth.decorators import login_required
+from django.contrib.auth.mixins import LoginRequiredMixin
 from django.contrib.auth.views import LoginView, PasswordChangeView, PasswordChangeDoneView
 from django.core.exceptions import ObjectDoesNotExist, MultipleObjectsReturned
 from django.db import transaction, DataError, IntegrityError
 from django.http import HttpResponseNotFound, HttpResponseForbidden, HttpResponseServerError
 from django.shortcuts import render, redirect, get_object_or_404
 from django.urls import reverse_lazy
-from django.views.generic import FormView
+from django.views.generic import FormView, CreateView, UpdateView, DeleteView
 
 from .forms import *
 from .utils import *
@@ -18,6 +19,11 @@ def home(request):
     if request.user.is_authenticated:
         if hasattr(request.user, 'profile') and not request.user.profile.budget:
             return redirect('start_budget')
+        if not Account.objects.filter(budget_id=request.user.profile.budget.pk):
+            if request.user.profile.budget.user == request.user:
+                return redirect('add_account')
+            else:
+                return redirect('no_account')
     return render(request, 'main/index.html',
                   get_u_context(request, {'title': 'Хомячок - управление личным бюджетом!',
                                           'selected_menu': 'home',
@@ -451,8 +457,179 @@ def remove_user_from_budget(request, user_id, return_url):
                                           'form': form,
                                           'profile_menu': True,
                                           'selected_menu': 'remove_user_from_budget'
-                                          }
-                                )
-                  )
+                                          }))
+
+
+@login_required
+def no_account(request):
+    """
+    Функция сообщения об отсутствии счетов в бюджете пользователю, который присоединился к бюджету другого пользователя
+    """
+    if not request.user.is_authenticated:
+        return redirect('home')
+    if not (hasattr(request.user, 'profile') and request.user.profile.budget):
+        return redirect('home')
+    budget_owner = request.user.profile.budget.user
+    if budget_owner.first_name or budget_owner.last_name:
+        budget_owner_name = budget_owner.first_name + ' ' + budget_owner.last_name
+    else:
+        budget_owner_name = budget_owner.username
+    budget_name = request.user.profile.budget.name
+    return render(request, 'main/account_does_not_exist.html',
+                  get_u_context(request, {'title': 'Добавление первого счета/кошелека',
+                                          'budget_owner_name': budget_owner_name,
+                                          'budget_name': budget_name}))
+
+
+class AddAccount(LoginRequiredMixin, DataMixin, CreateView):
+    """
+    Класс добавления счета/кошелька в бюджет
+    Доступен только для владельца бюджета
+    """
+    form_class = AddAccountForm
+    template_name = 'main/account_add.html'
+    login_url = reverse_lazy('login')
+
+    def get_context_data(self, *, object_list=None, **kwargs):
+        context = super().get_context_data(**kwargs)
+        c_def = self.get_user_context(title='Добавление счета/кошелька',
+                                      work_menu=True,
+                                      selected_menu='account_transactions')
+        return dict(list(context.items()) + list(c_def.items()))
+
+    def get_success_url(self):
+        return reverse_lazy('account_transactions', kwargs={'account_id': self.object.pk})
+
+    def form_valid(self, form):
+        self.object = form.save(commit=False)
+        self.object.user = self.request.user
+        self.object.budget = self.request.user.profile.budget
+        return super(AddAccount, self).form_valid(form)
+
+    def dispatch(self, request, *args, **kwargs):
+        if request.user.is_authenticated:
+            if not (hasattr(request.user, 'profile') and request.user.profile.budget):
+                return redirect('home')
+            if request.user.profile.budget.user != request.user:
+                return self.handle_no_permission()
+        self.initial = {'time_zone': ftod(self.request.user.profile.time_zone, 2)}
+        return super(AddAccount, self).dispatch(request, *args, **kwargs)
+
+
+class EditAccount(LoginRequiredMixin, DataMixin, UpdateView):
+    """
+    Класс изменения счета/кошелька бюджета
+    Доступен только для владельца бюджета
+    """
+    form_class = EditAccountForm
+    model = Account
+    template_name = 'main/account_edit.html'
+    pk_url_kwarg = 'account_id'
+    login_url = reverse_lazy('login')
+
+    def get_context_data(self, *, object_list=None, **kwargs):
+        context = super().get_context_data(**kwargs)
+        a = get_object_or_404(Account, pk=self.kwargs['account_id'])
+        c_def = self.get_user_context(title='Редактирование счета/кошелька - ' + str(a.name) + ' (' +
+                                            str(a.currency.iso_code) + ')',
+                                      account_selected=a.id,
+                                      account_currency=a.currency.iso_code,
+                                      work_menu=True,
+                                      selected_menu='account_transactions')
+        return dict(list(context.items()) + list(c_def.items()))
+
+    def get_success_url(self):
+        return reverse_lazy('account_transactions', kwargs={'account_id': self.kwargs['account_id']})
+
+    def dispatch(self, request, *args, **kwargs):
+        a = get_object_or_404(Account, pk=self.kwargs['account_id'])
+        if request.user.is_authenticated:
+            if not (hasattr(request.user, 'profile') and request.user.profile.budget):
+                return redirect('home')
+            if request.user.profile.budget.user != request.user:
+                return self.handle_no_permission()
+            if a.budget != request.user.profile.budget:
+                return self.handle_no_permission()
+        return super(EditAccount, self).dispatch(request, *args, **kwargs)
+
+
+class DeleteAccount(LoginRequiredMixin, DataMixin, DeleteView):
+    """
+    Класс удаления счета/кошелька бюджета
+    Доступен только для владельца бюджета
+    """
+    model = Account
+    template_name = 'main/account_delete.html'
+    pk_url_kwarg = 'account_id'
+    success_url = reverse_lazy('home')
+    login_url = reverse_lazy('login')
+
+    def get_context_data(self, *, object_list=None, **kwargs):
+        context = super().get_context_data(**kwargs)
+        a = get_object_or_404(Account, pk=self.kwargs['account_id'])
+        c_def = self.get_user_context(title='Удаление счета/кошелька - ' + str(a.name) + ' (' +
+                                            str(a.currency.iso_code) + ')',
+                                      account_selected=a.id,
+                                      account=a,
+                                      work_menu=True,
+                                      selected_menu='account_transactions')
+        return dict(list(context.items()) + list(c_def.items()))
+
+    def form_valid(self, form):
+        a = self.get_object()
+        # Если есль операции по счету, то удалять счет нельзя
+        # if Transaction.objects.filter(account_id=a.pk).count() > 0:
+        if False:
+            return render(self.request, 'main/account_delete.html',
+                          get_u_context(self.request, {'title': 'Удаление счета/кошелька - ' + str(a.name) + ' (' +
+                                                                str(a.currency.iso_code) + ')',
+                                                       'account_selected': a.id,
+                                                       'account': a,
+                                                       'error_message': 'Нельзя удалить счет/кошелек - в систему '
+                                                                        'заведены операции по нему',
+                                                       'work_menu': True,
+                                                       'selected_menu': 'account_transactions'}))
+
+        return super(DeleteAccount, self).form_valid(form)
+
+    def dispatch(self, request, *args, **kwargs):
+        a = get_object_or_404(Account, pk=self.kwargs['account_id'])
+        if request.user.is_authenticated:
+            if not (hasattr(request.user, 'profile') and request.user.profile.budget):
+                return redirect('home')
+            if request.user.profile.budget.user != request.user:
+                return self.handle_no_permission()
+            if a.budget != request.user.profile.budget:
+                return self.handle_no_permission()
+        return super(DeleteAccount, self).dispatch(request, *args, **kwargs)
+
+
+@login_required
+def account_transactions(request, account_id):
+    """
+    Функция списка операций по счету
+    """
+    if not request.user.is_authenticated:
+        return redirect('home')
+    if not (hasattr(request.user, 'profile') and request.user.profile.budget):
+        return redirect('home')
+    a = get_object_or_404(Account, pk=account_id)
+    if request.user.profile.budget.user != request.user:
+        return redirect('home')
+    if a.budget != request.user.profile.budget:
+        return redirect('home')
+    return render(request, 'main/account_transactions.html',
+                  get_u_context(request, {'title': 'Операции по счету/кошельку - ' + str(a),
+                                          'account_selected': a.id,
+                                          'account_currency_id': a.currency.id,
+                                          'account_currency_iso': a.currency.iso_code,
+                                          'account_available_balance': a.balance + a.credit_limit,
+                                          'account_balance': a.balance,
+                                          'account_credit_limit': a.credit_limit,
+                                          'account_type': a.type,
+                                          'account_budget': a.budget.id,
+                                          'work_menu': True,
+                                          'selected_menu': 'account_transactions'}))
+
 
 

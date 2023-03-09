@@ -1,6 +1,6 @@
-from decimal import Decimal
-
 from django.core.paginator import Paginator, EmptyPage
+
+from .models import *
 
 
 def get_u_context(request, initial_context):
@@ -25,11 +25,20 @@ def get_u_context(request, initial_context):
             else:
                 context['is_owner_budget'] = False
 
-        pass
+            accounts = Account.objects.filter(budget_id=request.user.profile.budget.pk).order_by('name')
+            context['accounts'] = accounts
+            if accounts:
+                context['first_account'] = accounts[0].pk
+            else:
+                context['first_account'] = 0
+            if 'account_selected' not in context:
+                context['account_selected'] = 0
 
-    else:
-        context['is_has_budget'] = False
-        context['is_owner_budget'] = False
+            pass
+
+        else:
+            context['is_has_budget'] = False
+            context['is_owner_budget'] = False
 
     return context
 
@@ -51,11 +60,5 @@ class DataMixin:
 
     def get_user_context(self, **kwargs):
         return get_u_context(self.request, kwargs)
-
-
-def ftod(val, prec=15):
-    if val is None:
-        val = 0.00
-    return Decimal(val).quantize(Decimal(10) ** -prec)
 
 

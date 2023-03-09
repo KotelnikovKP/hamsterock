@@ -29,6 +29,11 @@ def show_main_menu(is_authenticated=False, username='', is_staff=None, avatar=No
                             {'title': "Настройки бюджета", 'url_name': 'edit_budget'},
                             {'title': "О сервисе", 'url_name': 'about'},
                             ]
+                    menu = [{'title': "Счета и операции", 'url_name': 'account_transactions',
+                             'url_suffix': first_account},
+                            {'title': "Настройки бюджета", 'url_name': 'edit_budget'},
+                            {'title': "О сервисе", 'url_name': 'about'},
+                            ]
                 else:
                     menu = [{'title': "Текущее состояние", 'url_name': 'current_state',
                              'url_suffix': first_base_currency, 'url_suffix_2': 0},
@@ -38,13 +43,13 @@ def show_main_menu(is_authenticated=False, username='', is_staff=None, avatar=No
                              'url_suffix_2': first_base_currency},
                             {'title': "О сервисе", 'url_name': 'about'},
                             ]
-            menu = [{'title': "О сервисе", 'url_name': 'about'},
-                    ]
+                    menu = [{'title': "Счета и операции", 'url_name': 'account_transactions',
+                             'url_suffix': first_account},
+                            {'title': "О сервисе", 'url_name': 'about'},
+                            ]
         else:
             menu = [{'title': "Начать вести бюджет", 'url_name': 'start_budget'},
                     {'title': "О сервисе", 'url_name': 'about'},
-                    ]
-            menu = [{'title': "О сервисе", 'url_name': 'about'},
                     ]
     else:
         menu = [{'title': "О сервисе", 'url_name': 'about'},
@@ -70,6 +75,18 @@ def show_unauthenticated_left_menu(selected_menu=None):
 def show_profile_left_menu(selected_menu=None, is_has_budget=None, is_owner_budget=None, user=None):
     return {'selected_menu': selected_menu, 'is_has_budget': is_has_budget, 'is_owner_budget': is_owner_budget,
             'user': user}
+
+
+@register.inclusion_tag('main/menu_work.html')
+def show_work_left_menu(selected_menu=None, user=None, budget=None, accounts=None, account_selected=None,
+                        is_owner_budget=None, budget_years=None, budget_year_selected=None,
+                        base_currencies=None, base_currency_selected=None,
+                        month_shifts=None, month_shift_selected=None):
+    return {'selected_menu': selected_menu, 'user': user, 'budget': budget, 'accounts': accounts,
+            'account_selected': account_selected, 'is_owner_budget': is_owner_budget, 'budget_years': budget_years,
+            'budget_year_selected': budget_year_selected, 'base_currencies': base_currencies,
+            'base_currency_selected': base_currency_selected, 'month_shifts': month_shifts,
+            'month_shift_selected': month_shift_selected}
 
 
 @register.simple_tag(name='get_width')
