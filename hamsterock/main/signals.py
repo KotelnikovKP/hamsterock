@@ -12,3 +12,7 @@ def post_init_account_handler(instance, **kwargs):
     instance.original_type = instance.type
 
 
+@receiver(signal=models.signals.post_init, sender=BudgetObject)
+def post_init_budget_object_handler(instance, **kwargs):
+    instance.original_name = instance.name
+

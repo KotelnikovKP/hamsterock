@@ -9,7 +9,7 @@ from django.db import transaction, DataError, IntegrityError
 from django.http import HttpResponseNotFound, HttpResponseForbidden, HttpResponseServerError
 from django.shortcuts import render, redirect, get_object_or_404
 from django.urls import reverse_lazy
-from django.views.generic import FormView, CreateView, UpdateView, DeleteView
+from django.views.generic import FormView, CreateView, UpdateView, DeleteView, ListView
 
 from .forms import *
 from .utils import *
@@ -604,6 +604,292 @@ class DeleteAccount(LoginRequiredMixin, DataMixin, DeleteView):
         return super(DeleteAccount, self).dispatch(request, *args, **kwargs)
 
 
+class Projects(LoginRequiredMixin, DataMixin, ListView):
+    """
+    Класс вывода списка проектов бюджета
+    """
+    model = Project
+    template_name = 'main/projects.html'
+    context_object_name = 'projects'
+    allow_empty = True
+
+    def get_context_data(self, *, object_list=None, **kwargs):
+        context = super().get_context_data(**kwargs)
+        c_def = self.get_user_context(title='Проекты',
+                                      work_menu=True,
+                                      account_selected=-1,
+                                      selected_menu='account_transactions')
+        return dict(list(context.items()) + list(c_def.items()))
+
+    def get_queryset(self):
+        if not self.request.user.profile.budget:
+            b_id = 0
+        else:
+            b_id = self.request.user.profile.budget.pk
+        return Project.objects.filter(budget_id=b_id)
+
+    def dispatch(self, request, *args, **kwargs):
+        if request.user.is_authenticated:
+            if not (hasattr(request.user, 'profile') and request.user.profile.budget):
+                return redirect('home')
+        return super(Projects, self).dispatch(request, *args, **kwargs)
+
+
+class AddProject(LoginRequiredMixin, DataMixin, CreateView):
+    """
+    Класс добавления проекта в бюджет
+    """
+    form_class = AddProjectForm
+    template_name = 'main/project_add.html'
+    login_url = reverse_lazy('login')
+    success_url = reverse_lazy('projects')
+
+    def get_context_data(self, *, object_list=None, **kwargs):
+        context = super().get_context_data(**kwargs)
+        c_def = self.get_user_context(title='Добавление проекта',
+                                      work_menu=True,
+                                      account_selected=-1,
+                                      selected_menu='account_transactions')
+        return dict(list(context.items()) + list(c_def.items()))
+
+    def form_valid(self, form):
+        if Project.objects.filter(budget_id=self.request.user.profile.budget, name=form.cleaned_data['name']):
+            form.add_error('name', forms.ValidationError('Проект с таким именем уже существует!'))
+            return self.render_to_response(self.get_context_data(form=form))
+        self.object = form.save(commit=False)
+        self.object.budget = self.request.user.profile.budget
+        return super(AddProject, self).form_valid(form)
+
+    def dispatch(self, request, *args, **kwargs):
+        if request.user.is_authenticated:
+            if not (hasattr(request.user, 'profile') and request.user.profile.budget):
+                return redirect('home')
+        return super(AddProject, self).dispatch(request, *args, **kwargs)
+
+
+class EditProject(LoginRequiredMixin, DataMixin, UpdateView):
+    """
+    Класс изменения проекта бюджета
+    """
+    form_class = EditProjectForm
+    model = Project
+    template_name = 'main/project_edit.html'
+    pk_url_kwarg = 'project_id'
+    login_url = reverse_lazy('login')
+    success_url = reverse_lazy('projects')
+
+    def get_context_data(self, *, object_list=None, **kwargs):
+        context = super().get_context_data(**kwargs)
+        p = get_object_or_404(Project, pk=self.kwargs['project_id'])
+        c_def = self.get_user_context(title='Редактирование проекта - ' + str(p.name),
+                                      account_selected=-1,
+                                      work_menu=True,
+                                      selected_menu='account_transactions')
+        return dict(list(context.items()) + list(c_def.items()))
+
+    def dispatch(self, request, *args, **kwargs):
+        p = get_object_or_404(Project, pk=self.kwargs['project_id'])
+        if request.user.is_authenticated:
+            if not (hasattr(request.user, 'profile') and request.user.profile.budget):
+                return redirect('home')
+            if p.budget != request.user.profile.budget:
+                return self.handle_no_permission()
+        return super(EditProject, self).dispatch(request, *args, **kwargs)
+
+
+class DeleteProject(LoginRequiredMixin, DataMixin, DeleteView):
+    """
+    Класс удаления проекта бюджета
+    """
+    model = Project
+    template_name = 'main/project_delete.html'
+    pk_url_kwarg = 'project_id'
+    success_url = reverse_lazy('projects')
+    login_url = reverse_lazy('login')
+
+    def get_context_data(self, *, object_list=None, **kwargs):
+        context = super().get_context_data(**kwargs)
+        p = get_object_or_404(Project, pk=self.kwargs['project_id'])
+        c_def = self.get_user_context(title='Удаление проекта - ' + str(p.name),
+                                      account_selected=-1,
+                                      project=p,
+                                      work_menu=True,
+                                      selected_menu='account_transactions')
+        return dict(list(context.items()) + list(c_def.items()))
+
+    def form_valid(self, form):
+        p = self.get_object()
+        # Если есть операции с текущим проектом, то удалять его нельзя
+        # if Transaction.objects.filter(project_id=p.pk).count() > 0:
+        if False:
+            return render(self.request, 'main/project_delete.html',
+                          get_u_context(self.request, {'title': 'Удаление проекта - ' + str(p.name),
+                                                       'account_selected': -1,
+                                                       'project': p,
+                                                       'error_message': 'Нельзя удалить проект - в систему '
+                                                                        'заведены операции по нему',
+                                                       'work_menu': True,
+                                                       'selected_menu': 'account_transactions'}))
+
+        return super(DeleteProject, self).form_valid(form)
+
+    def dispatch(self, request, *args, **kwargs):
+        p = get_object_or_404(Project, pk=self.kwargs['project_id'])
+        if request.user.is_authenticated:
+            if not (hasattr(request.user, 'profile') and request.user.profile.budget):
+                return redirect('home')
+            if p.budget != request.user.profile.budget:
+                return self.handle_no_permission()
+        # print(p)
+        return super(DeleteProject, self).dispatch(request, *args, **kwargs)
+
+
+class BudgetObjects(LoginRequiredMixin, DataMixin, ListView):
+    """
+    Класс вывода списка бюджетных объектов
+    """
+    model = BudgetObject
+    template_name = 'main/budget_objects.html'
+    context_object_name = 'budget_objects'
+    allow_empty = True
+
+    def get_context_data(self, *, object_list=None, **kwargs):
+        context = super().get_context_data(**kwargs)
+        c_def = self.get_user_context(title='Объекты бюджета',
+                                      work_menu=True,
+                                      account_selected=-2,
+                                      selected_menu='account_transactions')
+        return dict(list(context.items()) + list(c_def.items()))
+
+    def get_queryset(self):
+        if not self.request.user.profile.budget:
+            b_id = 0
+        else:
+            b_id = self.request.user.profile.budget.pk
+        return BudgetObject.objects.filter(budget_id=b_id)
+
+    def dispatch(self, request, *args, **kwargs):
+        if request.user.is_authenticated:
+            if not (hasattr(request.user, 'profile') and request.user.profile.budget):
+                return redirect('home')
+        return super(BudgetObjects, self).dispatch(request, *args, **kwargs)
+
+
+class AddBudgetObject(LoginRequiredMixin, DataMixin, CreateView):
+    """
+    Класс добавления бюджетного объекта
+    """
+    form_class = AddBudgetObjectForm
+    template_name = 'main/budget_object_add.html'
+    login_url = reverse_lazy('login')
+    success_url = reverse_lazy('budget_objects')
+
+    def get_context_data(self, *, object_list=None, **kwargs):
+        context = super().get_context_data(**kwargs)
+        c_def = self.get_user_context(title='Добавление объекта бюджета',
+                                      work_menu=True,
+                                      account_selected=-2,
+                                      selected_menu='account_transactions')
+        return dict(list(context.items()) + list(c_def.items()))
+
+    def form_valid(self, form):
+        if BudgetObject.objects.filter(budget_id=self.request.user.profile.budget, name=form.cleaned_data['name']):
+            form.add_error('name', forms.ValidationError('Объект бюджета с таким именем уже существует!'))
+            return self.render_to_response(self.get_context_data(form=form))
+        self.object = form.save(commit=False)
+        self.object.budget = self.request.user.profile.budget
+        return super(AddBudgetObject, self).form_valid(form)
+
+    def dispatch(self, request, *args, **kwargs):
+        if request.user.is_authenticated:
+            if not (hasattr(request.user, 'profile') and request.user.profile.budget):
+                return redirect('home')
+        return super(AddBudgetObject, self).dispatch(request, *args, **kwargs)
+
+
+class EditBudgetObject(LoginRequiredMixin, DataMixin, UpdateView):
+    """
+    Класс изменения бюджетного объекта
+    """
+    form_class = EditBudgetObjectForm
+    model = BudgetObject
+    template_name = 'main/budget_object_edit.html'
+    pk_url_kwarg = 'budget_object_id'
+    login_url = reverse_lazy('login')
+    success_url = reverse_lazy('budget_objects')
+
+    def get_context_data(self, *, object_list=None, **kwargs):
+        context = super().get_context_data(**kwargs)
+        b = get_object_or_404(BudgetObject, pk=self.kwargs['budget_object_id'])
+        c_def = self.get_user_context(title='Редактирование объекта бюджета - ' + str(b.name),
+                                      account_selected=-2,
+                                      work_menu=True,
+                                      selected_menu='account_transactions')
+        return dict(list(context.items()) + list(c_def.items()))
+
+    def dispatch(self, request, *args, **kwargs):
+        b = get_object_or_404(BudgetObject, pk=self.kwargs['budget_object_id'])
+        if request.user.is_authenticated:
+            if not (hasattr(request.user, 'profile') and request.user.profile.budget):
+                return redirect('home')
+            if b.budget != request.user.profile.budget:
+                return self.handle_no_permission()
+        return super(EditBudgetObject, self).dispatch(request, *args, **kwargs)
+
+
+class DeleteBudgetObject(LoginRequiredMixin, DataMixin, DeleteView):
+    """
+    Класс удаления бюджетного объекта
+    """
+    model = BudgetObject
+    template_name = 'main/budget_object_delete.html'
+    pk_url_kwarg = 'budget_object_id'
+    success_url = reverse_lazy('budget_objects')
+    login_url = reverse_lazy('login')
+
+    def get_context_data(self, *, object_list=None, **kwargs):
+        context = super().get_context_data(**kwargs)
+        b = get_object_or_404(BudgetObject, pk=self.kwargs['budget_object_id'])
+        c_def = self.get_user_context(title='Удаление объекта бюджета - ' + str(b.name),
+                                      account_selected=-2,
+                                      budget_object=b,
+                                      work_menu=True,
+                                      selected_menu='account_transactions')
+        return dict(list(context.items()) + list(c_def.items()))
+
+    def form_valid(self, form):
+        b = self.get_object()
+        categories = Category.objects.filter(budget_object_id=b.pk)
+        is_transactions_exist = False
+        for category in categories:
+            # Если есть категории с бюджетным объектом в операциях, то удалять бюджетный объект нельзя
+            # if TransactionCategory.objects.filter(category_id=category.pk).count() > 0:
+            if False:
+                is_transactions_exist = True
+                break
+        if is_transactions_exist:
+            return render(self.request, 'main/budget_object_delete.html',
+                          get_u_context(self.request, {'title': 'Удаление объекта бюджета - ' + str(b.name),
+                                                       'account_selected': -2,
+                                                       'budget_object': b,
+                                                       'error_message': 'Нельзя удалить объекта бюджета - в систему '
+                                                                        'заведены операции по нему',
+                                                       'work_menu': True,
+                                                       'selected_menu': 'account_transactions'}))
+
+        return super(DeleteBudgetObject, self).form_valid(form)
+
+    def dispatch(self, request, *args, **kwargs):
+        b = get_object_or_404(BudgetObject, pk=self.kwargs['budget_object_id'])
+        if request.user.is_authenticated:
+            if not (hasattr(request.user, 'profile') and request.user.profile.budget):
+                return redirect('home')
+            if b.budget != request.user.profile.budget:
+                return self.handle_no_permission()
+        # print(p)
+        return super(DeleteBudgetObject, self).dispatch(request, *args, **kwargs)
+
+
 @login_required
 def account_transactions(request, account_id):
     """
@@ -614,8 +900,6 @@ def account_transactions(request, account_id):
     if not (hasattr(request.user, 'profile') and request.user.profile.budget):
         return redirect('home')
     a = get_object_or_404(Account, pk=account_id)
-    if request.user.profile.budget.user != request.user:
-        return redirect('home')
     if a.budget != request.user.profile.budget:
         return redirect('home')
     return render(request, 'main/account_transactions.html',

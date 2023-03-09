@@ -24,9 +24,6 @@
 <li><a href="{% url 'add_account' %}">Добавить счет/кошелек</a></li>
 <p> </p>
 <hr style="height: 2px;">
-
-{% comment %}
-
       {% if account_selected == -2 %}
 <li class="selected">Объекты бюджета</li>
       {% else %}
@@ -39,9 +36,6 @@
       {% else %}
 <li><a href="{% url 'projects' %}">Проекты</a></li>
       {% endif %}
-
-{% endcomment %}
-
    {% endif %}
 {% endif %}
 

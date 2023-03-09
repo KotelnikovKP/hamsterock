@@ -7,6 +7,8 @@ from django.db.models import Index
 from django.urls import reverse
 from django.utils.formats import date_format, number_format
 from django.utils.safestring import mark_safe
+from mptt.fields import TreeForeignKey
+from mptt.models import MPTTModel
 
 from hamsterock.settings import OXR_API_KEY
 from .pyoxr import *
@@ -168,6 +170,20 @@ MIN_BUDGET_YEAR = 2000
 MAX_BUDGET_YEAR = 2100
 MIN_TRANSACTION_DATETIME = datetime(MIN_BUDGET_YEAR, 1, 1, 0, 0, 0, 0, timezone.utc)
 MAX_TRANSACTION_DATETIME = datetime(MAX_BUDGET_YEAR, 12, 31, 23, 59, 59, 999999, timezone.utc)
+
+CATEGORY_TYPES = [
+    ('INC', 'Доход'),
+    ('EXP', 'Расход'),
+]
+
+OBJECT_TYPES = [
+    (None, '<не выбран>'),
+    ('Персона', 'Персона'),
+    ('Недвижимость', 'Недвижимость'),
+    ('Транспорт', 'Транспорт'),
+    ('Питомец', 'Питомец'),
+    ('Бизнес', 'Бизнес'),
+]
 
 
 class Profile(models.Model):
@@ -706,4 +722,254 @@ class AccountTurnover(models.Model):
     def __str__(self):
         return 'Бюджетные обороты по счету - ' + str(self.account) + ' ' + \
                str(self.budget_period.year) + ' ' + str(self.budget_period.month)
+
+
+class Project(models.Model):
+    """
+    Проекты
+    Доходы и расходы в бюджете поделены на два типа: текущие и проектные. Текущие доходы и расходы возникают постоянно,
+    они присутствуют в каждом месяце, например, зарплата или расходы на продукты. Проектные доходы и расходы - разовые,
+    уникальные, ограничены по времени, например, поездка на море, свадьба.
+    В системе операцию можно отнести к проекту, тогда ее сумма будет учитываться в проектных расходах.
+    Операции без указания проекта учитываются в бюджете как текущие.
+    Проект имеет флаг завершенности, при установке которого проект невозможно будет выбрать для новой операции,
+    при этом он останется в факте бюджета.
+    """
+    budget = models.ForeignKey('Budget', on_delete=models.PROTECT, null=True, blank=True, verbose_name='Бюджет')
+    name = models.CharField(max_length=100, verbose_name='Наименование')
+    is_project_completed = models.BooleanField(default=False, verbose_name='Проект завершен?')
+
+    class Meta:
+        verbose_name = 'Проект'
+        verbose_name_plural = 'Проекты'
+        indexes = (Index(fields=['budget', 'is_project_completed'],
+                         name='p__budget_is_completed_idx'),
+                   )
+        ordering = ['budget', 'is_project_completed']
+        constraints = [
+            models.UniqueConstraint(fields=['budget', 'name'], name='project__budget_name_unique'),
+        ]
+
+    def __str__(self):
+        return self.name
+
+
+class BudgetObject(models.Model):
+    """
+    Бюджетные объекты
+    Бюджетный объект - это возможность разделить базовую категорию дохода или расхода на несколько по объектам
+    конкретного бюджета, например, Зарплата: зарплата мужа и зарплата жены - здесь два бюджетных объекта (муж и жена).
+    Также можно разделять категории доходов и расходов по детям, по питомцам, по объектам недвижимости, по транспорту.
+    Для каждого бюджетного объекта в справочнике категорий заводится отдельная строка, которая имеет название
+    базовой категории и после название бюджетного объекта в скобках. Также статья этой категории имеет статью
+    базовой категории плюс буквенный индекс.
+    """
+    budget = models.ForeignKey('Budget', on_delete=models.PROTECT, null=True, blank=True, verbose_name='Бюджет')
+    object_type = models.CharField(max_length=15, choices=OBJECT_TYPES, null=False, blank=False,
+                                   verbose_name='Тип объекта')
+    name = models.CharField(max_length=25, verbose_name='Имя объекта')
+
+    original_name = None
+
+    class Meta:
+        verbose_name = 'Объект бюджета'
+        verbose_name_plural = 'Объекты бюджета'
+        indexes = (Index(fields=['budget', 'name'], name='budget_object__budget_name_idx'),
+                   )
+        ordering = ['budget', 'name']
+        constraints = [
+            models.UniqueConstraint(fields=['budget', 'name'], name='budget_object__budget_name_unique'),
+        ]
+
+    def __str__(self):
+        return self.name
+
+    def save(self, *args, **kwargs):
+        """
+        Триггер на добавление/изменение
+        Если изменилось название бюджетного объекта, то нужно заменить названия категорий, связанных с ним.
+        """
+        if self.original_name != self.name:
+            categories_with_object = Category.objects.filter(budget_id=self.budget_id, budget_object_id=self.id)
+            for category_with_object in categories_with_object:
+                try:
+                    category_with_object.name = \
+                        Category.objects.get(type=category_with_object.type, item=category_with_object.item[:6]).name + \
+                        ' (' + self.name + ')'
+                    category_with_object.save()
+                except Exception as e:
+                    pass
+        super(BudgetObject, self).save(*args, **kwargs)
+
+
+class Category(MPTTModel):
+    """
+    Категории доходов и расходов
+    Иерархическая структура с двумя уровнями. Статьи бюджета строятся по категориям их этого справочника.
+    Для операции доступен выбор категории только второго уровня.
+    Редактируется только из админки.
+    ВАЖНО!!! Нужно соблюдать правила редактирования списка категорий в админке:
+    - строго два уровня (не должно быть категорий третьего и далее уровней, не должно быть пустой категории
+    первого уровня);
+    - статья категории первого уровня должна быть формата "XX." (две цифры и точка, уникальные)
+    - статья категории второго уровня должна быть формата "XX.ХХ." (две цифры родительской категории,
+    точка две цифры и точка, уникальные);
+    - изменять категорию с бюджетными объектами нельзя (можно менять только имя и статью при изменении имени и статьи
+    базовой категории в части, относящейся к базовой категории);
+    - удалять категорию второго уровня, по которой есть категории с бюджетными объектами, нельзя
+    """
+    name = models.CharField(max_length=100, null=False, blank=False, verbose_name='Наименование')
+    parent = TreeForeignKey('self', on_delete=models.PROTECT, null=True, blank=True, related_name='children',
+                            verbose_name='Родительская категория')
+    type = models.CharField(max_length=3, choices=CATEGORY_TYPES, null=False, blank=False, verbose_name='Тип')
+    item = models.CharField(max_length=10, default='??', db_index=True, null=False, blank=False, verbose_name='Статья')
+    user = models.ForeignKey(User, on_delete=models.PROTECT, null=True, blank=True,
+                             verbose_name='Добавивший категорию в систему')
+    budget = models.ForeignKey('Budget', on_delete=models.CASCADE, null=True, blank=True,
+                               verbose_name='Только для бюджета')
+    budget_object = models.ForeignKey('BudgetObject', on_delete=models.CASCADE, null=True, blank=True,
+                                      verbose_name='Объект бюджета')
+    time_create = models.DateTimeField(auto_now_add=True, verbose_name='Время создания')
+    time_update = models.DateTimeField(auto_now=True, verbose_name='Время изменения')
+
+    def __str__(self):
+        return self.name
+        # return self.item + ' ' + self.name
+
+    def get_absolute_url(self):
+        return reverse('category', kwargs={'category_id': self.pk})
+
+    class Meta:
+        verbose_name = 'Категория доходов/расходов'
+        verbose_name_plural = 'Категории доходов/расходов'
+        indexes = (Index(fields=['type', 'item', 'budget'], name='category__type_item_budget_idx'),
+                   Index(fields=['budget', 'name'], name='category__budget_name_idx'),
+                   )
+        constraints = [
+            models.UniqueConstraint(fields=['budget', 'name'], name='category__budget_name_unique'),
+        ]
+        ordering = ['item']
+
+    class MPTTMeta:
+        verbose_name = 'Категория доходов/расходов'
+        verbose_name_plural = 'Категории доходов/расходов'
+        order_insertion_by = ['item']
+
+    @classmethod
+    def get_category_with_object(cls, budget, category_id, object_id, user):
+        """
+        Получение категории с бюджетным объектом, по базовой категории и бюджетному объекту.
+        Возвращает найденную существующую категорию, либо вновь созданную.
+        :param budget: объект текущего бюджета;
+        :param category_id: id базовой категории;
+        :param object_id: id бюджетного объекта;
+        :param user: текущий пользователь;
+        :return: id найденной или созданной категории
+        """
+        # Не объекта или бюджета
+        if not object_id or not budget:
+            return category_id
+
+        # Получаем по объекты базовой категории и бюджетного объекта
+        try:
+            category = Category.objects.get(pk=category_id)
+            category_name = category.name
+            budget_object = BudgetObject.objects.get(pk=object_id)
+            object_name = budget_object.name
+        except Exception as e:
+            # Не смогли получить категорию или объект
+            return category_id
+
+        # Если категория первого уровня, то ее и возвращаем (нельзя иметь категорию с бюджетным объектом 1 уровня)
+        if not category.parent:
+            return category_id
+
+        # Попытаемся найти существующую категорию с бюджетным объектом
+        try:
+            category_with_object = Category.objects.get(budget_id=budget.pk,
+                                                        name=category_name + ' (' + object_name + ')')
+            # Нашли нужную категорию!!!
+            return category_with_object.pk
+        except Exception as e:
+            pass
+
+        # Будем создавать новую категорию по заданным базовой категории и бюджетному объекту
+        cat = Category()
+        cat.name = category_name + ' (' + object_name + ')'
+        cat.parent = category.parent
+        cat.type = category.type
+        cat.user = user
+        cat.budget = budget
+        cat.budget_object = budget_object
+
+        # Вычислим буквенный индекс (либо "a" для первого, либо следующий, если для данной базовой категории
+        # уже существуют категории с другими бюджетными объектами заданного бюджета
+        categories = Category.objects.filter(budget_id=budget.pk,
+                                             name__startswith=category_name).order_by('budget', '-item')
+        if categories:
+            last_item = categories[0].item
+            cat.item = category.item + chr(ord(last_item[last_item.rfind('.') + 1:]) + 1)
+        else:
+            cat.item = category.item + 'a'
+
+        # Сохраним новую категорию с бюджетным объектом
+        cat.save()
+        return cat.pk
+
+    def get_common_category_id(self):
+        """
+        Получение базовой категории для данной категории
+        """
+        try:
+            return Category.objects.get(type=self.type, item=self.item[:6]).pk
+        except Exception as e:
+            return self.pk
+
+
+class BudgetRegister(models.Model):
+    """
+    Бюджетные регистры
+    Собственно, наполнение бюджета. Здесь содержатся плановые и фактические значения в базовой и дополнительной
+    валютах бюджета в разрезе категорий и периодов (месяцев), а также в разрезе проектов.
+    Регистр, где не указан проект - это текущий приход/расход. Регистр с проектом, соответственно, проектный.
+    Для плана проектных доходов/расходов используется регистр с проектом = 0 (планирование проектных расходов
+    предусмотрено одной суммой без разбивки на отдельные проекты)
+    """
+    budget = models.ForeignKey('Budget', null=False, blank=False, on_delete=models.CASCADE, verbose_name='Бюджет')
+    budget_year = models.IntegerField(null=False, blank=False, verbose_name='Год бюджета')
+    budget_month = models.IntegerField(choices=MONTHS, null=False, blank=False,
+                                       verbose_name='Месяц бюджета')
+    category = models.ForeignKey('Category', null=False, blank=False, on_delete=models.CASCADE,
+                                 verbose_name='Статья бюджета')
+    project = models.ForeignKey('Project', on_delete=models.CASCADE, null=True, blank=True, verbose_name='Проект')
+    planned_amount_base_cur_1 = models.DecimalField(default=0.00, null=False, blank=False, max_digits=19,
+                                                    decimal_places=2,
+                                                    verbose_name='План в основной базовой валюте')
+    planned_amount_base_cur_2 = models.DecimalField(default=0.00, null=False, blank=False, max_digits=19,
+                                                    decimal_places=2,
+                                                    verbose_name='План в дополнительной базовой валюте')
+    actual_amount_base_cur_1 = models.DecimalField(default=0.00, null=False, blank=False, max_digits=19,
+                                                   decimal_places=2,
+                                                   verbose_name='Факт в основной базовой валюте')
+    actual_amount_base_cur_2 = models.DecimalField(default=0.00, null=False, blank=False, max_digits=19,
+                                                   decimal_places=2,
+                                                   verbose_name='Факт в дополнительной базовой валюте')
+
+    class Meta:
+        verbose_name = 'Регистр бюджета'
+        verbose_name_plural = 'Регистры бюджета'
+        indexes = (Index(fields=['budget', 'budget_year', 'budget_month', 'category', 'project'],
+                         name='br__bud_year_month_cat_pr_idx'),
+                   )
+        ordering = ['budget', 'budget_year', 'budget_month', 'category', 'project']
+
+    def __str__(self):
+        project_name = 'доход' if self.category.type == 'INC' else 'расход'
+        if self.project:
+            project_name = 'Доп. ' + project_name + ': ' + str(self.project)
+        else:
+            project_name = 'Текущий ' + project_name
+        return 'Регистр бюджета: ' + str(self.budget) + ' - ' + str(self.budget_year) + ' | ' + \
+               str(self.budget_month) + ' | ' + str(self.category) + ' | ' + project_name
+
 

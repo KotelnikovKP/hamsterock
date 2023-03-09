@@ -22,5 +22,13 @@ urlpatterns = [
     path('add_account/', AddAccount.as_view(), name='add_account'),
     path('edit_account/<int:account_id>/', EditAccount.as_view(), name='edit_account'),
     path('delete_account/<int:account_id>/', DeleteAccount.as_view(), name='delete_account'),
+    path('projects/', Projects.as_view(), name='projects'),
+    path('add_project/', AddProject.as_view(), name='add_project'),
+    path('edit_project/<int:project_id>/', EditProject.as_view(), name='edit_project'),
+    path('delete_project/<int:project_id>/', DeleteProject.as_view(), name='delete_project'),
+    path('budget_objects/', BudgetObjects.as_view(), name='budget_objects'),
+    path('add_budget_object/', AddBudgetObject.as_view(), name='add_budget_object'),
+    path('edit_budget_object/<int:budget_object_id>/', EditBudgetObject.as_view(), name='edit_budget_object'),
+    path('delete_budget_object/<int:budget_object_id>/', DeleteBudgetObject.as_view(), name='delete_budget_object'),
     path('account_transactions/<int:account_id>/', account_transactions, name='account_transactions'),
 ]

@@ -1,0 +1,20 @@
+{% extends 'main/base.html' %}
+
+{% block content %}
+<h1>{{title}}</h1>
+{% if error_message %}
+<form>
+    {% csrf_token %}
+    <div class="form-error">{{ error_message }}</div>
+    <p> </p>
+    <a href="{% url 'budget_objects' %}"><input type="button" value="Возврат"></a>
+</form>
+{% else %}
+<form method="post">
+    {% csrf_token %}
+    <p>Удалить проект <strong>{{ project.name }}</strong>?</p>
+    <button type="submit">Удалить объект бюджета</button> <a href="{% url 'budget_objects' %}"><input type="button" value="Отмена"></a>
+</form>
+{% endif %}
+
+{% endblock %}

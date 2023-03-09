@@ -1,0 +1,22 @@
+{% extends 'main/base.html' %}
+{% load static %}
+
+{% block content %}
+<h1>{{title}}</h1>
+<a href="{% url 'add_budget_object' %}"><input type="button" value="Добавить объект бюджета"></a>
+<p> </p>
+<table class="table-project">
+    <tr>
+        <th>НАИМЕНОВАНИЕ</th>
+        <th>ТИП</th>
+        <th></th>
+    </tr>
+   {% for p in budget_objects %}
+    <tr>
+        <td><a href="{% url 'edit_budget_object' p.pk %}">{{ p.name }}</a></td>
+        <td>{{ p.object_type }}</td>
+        <td><a href="{% url 'edit_budget_object' p.pk %}"><img src="{% static 'main/images/edit.png' %}" style="max-height:14px"></a>&nbsp&nbsp&nbsp<a href="{% url 'delete_budget_object' p.pk %}"><img src="{% static 'main/images/delete.png' %}" style="max-height:14px"></a></td>
+    </tr>
+   {% endfor %}
+</table>
+{% endblock %}

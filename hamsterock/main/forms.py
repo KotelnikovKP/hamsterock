@@ -344,3 +344,53 @@ class EditAccountForm(forms.ModelForm):
                                                    'с которой будут загружены операции по нему в систему '
 
 
+class AddProjectForm(forms.ModelForm):
+    class Meta:
+        model = Project
+        fields = ['name', 'is_project_completed']
+        widgets = {
+            'name': forms.TextInput(attrs={'class': 'form-input'}),
+        }
+
+    def __init__(self, *args, **kwargs):
+        super(AddProjectForm, self).__init__(*args, **kwargs)
+
+
+class EditProjectForm(forms.ModelForm):
+    class Meta:
+        model = Project
+        fields = ['name', 'is_project_completed']
+        widgets = {
+            'name': forms.TextInput(attrs={'class': 'form-input'}),
+        }
+
+    def __init__(self, *args, **kwargs):
+        super(EditProjectForm, self).__init__(*args, **kwargs)
+
+
+class AddBudgetObjectForm(forms.ModelForm):
+    class Meta:
+        model = BudgetObject
+        fields = ['name', 'object_type']
+        widgets = {
+            'name': forms.TextInput(attrs={'class': 'form-input'}),
+            'object_type': forms.Select(attrs={'class': 'form-input'}),
+        }
+
+    def __init__(self, *args, **kwargs):
+        super(AddBudgetObjectForm, self).__init__(*args, **kwargs)
+
+
+class EditBudgetObjectForm(forms.ModelForm):
+    class Meta:
+        model = BudgetObject
+        fields = ['name', 'object_type']
+        widgets = {
+            'name': forms.TextInput(attrs={'class': 'form-input'}),
+            'object_type': forms.Select(attrs={'class': 'form-input'}),
+        }
+
+    def __init__(self, *args, **kwargs):
+        super(EditBudgetObjectForm, self).__init__(*args, **kwargs)
+
+

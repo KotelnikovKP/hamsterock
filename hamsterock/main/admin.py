@@ -1,5 +1,6 @@
 from django.contrib import admin
 from django.utils.safestring import mark_safe
+from mptt.admin import MPTTModelAdmin
 
 from main.models import *
 
@@ -63,4 +64,19 @@ class CurrencyRateAdmin(admin.ModelAdmin):
 
 
 admin.site.register(CurrencyRate, CurrencyRateAdmin)
+
+
+class CategoryAdmin(MPTTModelAdmin):
+    mptt_level_indent = 50
+    list_display = ['item', 'name', 'type', 'user', 'budget', 'budget_object', 'time_create', 'time_update']
+    list_display_links = ('item', 'name', )
+    search_fields = ('item', 'name', )
+    fields = ('parent', 'item', 'name', 'type', 'user', 'budget', 'budget_object', 'time_create', 'time_update')
+    save_on_top = True
+    list_filter = ('type', )
+    readonly_fields = ('time_create', 'time_update')
+
+
+admin.site.register(Category, CategoryAdmin)
+
 
