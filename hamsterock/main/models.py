@@ -657,3 +657,53 @@ class Account(models.Model):
 
         super(Account, self).save(*args, **kwargs)
 
+
+class AccountTurnover(models.Model):
+    """
+    Бюджетные обороты по счету
+    Полностью расчетная модель, содержащая остаток на начало, сумму прихода, сумму расхода и остаток на конец по счету
+    за каждый период бюджета (месяц). Изменения вносятся при срабатывании триггера добавления/сохранения категорий
+    операций по счету/кошельку при изменении оных вручную, либо при выполнении процедуры пересчета остатков.
+    Данные хранятся в базовой и дополнительной валютах бюджета.
+    Модель необходима для получения остатков по счетам/кошелькам по периодам при построении годовых бюджетов.
+    """
+    budget = models.ForeignKey('Budget', on_delete=models.CASCADE, null=True, blank=True, verbose_name='Бюджет')
+    account = models.ForeignKey('Account', on_delete=models.CASCADE, verbose_name='Счет/кошелек')
+    budget_period = models.DateTimeField(null=False, blank=False, verbose_name='Период бюджета')
+    begin_balance_base_cur_1 = models.DecimalField(default=0.00, null=False, blank=False,
+                                                   max_digits=19, decimal_places=2,
+                                                   verbose_name='Остаток на начало периода в базовой валюте')
+    credit_turnover_base_cur_1 = models.DecimalField(default=0.00, null=False, blank=False,
+                                                     max_digits=19, decimal_places=2,
+                                                     verbose_name='Кредитовый оборот в базовой валюте')
+    debit_turnover_base_cur_1 = models.DecimalField(default=0.00, null=False, blank=False,
+                                                    max_digits=19, decimal_places=2,
+                                                    verbose_name='Дебетовый оборот в базовой валюте')
+    end_balance_base_cur_1 = models.DecimalField(default=0.00, null=False, blank=False,
+                                                 max_digits=19, decimal_places=2,
+                                                 verbose_name='Остаток на конец периода в базовой валюте')
+    begin_balance_base_cur_2 = models.DecimalField(default=0.00, null=False, blank=False,
+                                                   max_digits=19, decimal_places=2,
+                                                   verbose_name='Остаток на начало периода в дополнительной валюте')
+    credit_turnover_base_cur_2 = models.DecimalField(default=0.00, null=False, blank=False,
+                                                     max_digits=19, decimal_places=2,
+                                                     verbose_name='Кредитовый оборот в дополнительной валюте')
+    debit_turnover_base_cur_2 = models.DecimalField(default=0.00, null=False, blank=False,
+                                                    max_digits=19, decimal_places=2,
+                                                    verbose_name='Дебетовый оборот в дополнительной валюте')
+    end_balance_base_cur_2 = models.DecimalField(default=0.00, null=False, blank=False,
+                                                 max_digits=19, decimal_places=2,
+                                                 verbose_name='Остаток на конец периода в дополнительной валюте')
+
+    class Meta:
+        verbose_name = 'Бюджетные обороты по счету'
+        verbose_name_plural = 'Бюджетные обороты по счету'
+        indexes = (Index(fields=['budget', 'account', 'budget_period'],
+                         name='at__budget_account_period_idx'),
+                   )
+        ordering = ['budget', 'account', 'budget_period']
+
+    def __str__(self):
+        return 'Бюджетные обороты по счету - ' + str(self.account) + ' ' + \
+               str(self.budget_period.year) + ' ' + str(self.budget_period.month)
+
