@@ -45,4 +45,8 @@ urlpatterns = [
          join_confirmation_between_transactions, name='join_confirmation_between_transactions'),
     path('delete_join_between_transactions/<int:transaction_id>/<path:return_url>/', delete_join_between_transactions,
          name='delete_join_between_transactions'),
+    path('balances_recalculation/<int:budget_id>/<path:return_url>/', balances_recalculation,
+         name='balances_recalculation'),
+    path('account_transactions_without_join/<int:budget_id>/<path:return_url>/', account_transactions_without_join,
+         name='account_transactions_without_join'),
 ]

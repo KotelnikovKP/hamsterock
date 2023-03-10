@@ -1,0 +1,16 @@
+{% extends 'main/base.html' %}
+{% load main_tags %}
+{% load static %}
+
+{% block content %}
+<h1>{{title}}</h1>
+<p>
+    <label class="form-label" style="max-width: 800px;">Для выполнения процедуры пересчета остатков необходимо, чтобы все перемещения были имели связи. У части счетов есть операции перемещений без связи.</label>
+</p>
+<p><strong>СЧЕТА:</strong></p>
+{% for account in accounts_with_unlinked_transactions %}
+<p style="margin: 5px 0px 0px 0px;">{{ account }}</p>
+{% endfor %}
+<p></p>
+<a href="{{ return_url }}"><input type="button" value="Возврат"></a>
+{% endblock %}

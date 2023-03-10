@@ -1651,8 +1651,9 @@ def join_confirmation_between_transactions(request, sender_id, receiver_id, retu
 
     if request.method == 'GET':
         is_time_transaction_valid = \
-            sender_transaction.time_transaction <= receiver_transaction.time_transaction or \
-            receiver_transaction.time_transaction <= sender_transaction.time_transaction + DEFAULT_TIME_DELTA
+            sender_transaction.time_transaction <= \
+            receiver_transaction.time_transaction <= \
+            sender_transaction.time_transaction + DEFAULT_TIME_DELTA
         is_amount_valid = receiver_transaction.amount == -sender_transaction.amount_acc_cur
         is_currency_valid = receiver_transaction.currency == sender_transaction.account.currency
 
@@ -1868,9 +1869,13 @@ def join_confirmation_between_transactions(request, sender_id, receiver_id, retu
 
 @login_required
 def delete_join_between_transactions(request, transaction_id, return_url):
+    """
+    Функция удаления связи между операциями перемещения
+    """
+
     if not request.user.is_authenticated:
         return redirect('home')
-    if not request.user.profile.budget:
+    if not (hasattr(request.user, 'profile') and request.user.profile.budget):
         return redirect('home')
     changed_transaction = Transaction.objects.get(pk=transaction_id)
     if changed_transaction.budget != request.user.profile.budget:
@@ -1892,3 +1897,727 @@ def delete_join_between_transactions(request, transaction_id, return_url):
     except Exception as e:
         print('Что-то пошло не так с удалением связи между операциями - ' + str(e))
     return redirect(return_url)
+
+
+@login_required
+def balances_recalculation(request, budget_id, return_url):
+    """
+    Процедура пересчета остатков
+
+    В данной процедуре производится расчет атрибутов операций, необходимые для расчета бюджета:
+    - остаток по счету в валюте счета;
+    - остатки по счету в базовой и дополнительной валютах бюджета;
+    - суммы операции в базовой и дополнительной валютах бюджета.
+    Изменение сумм операции в базовой и дополнительной валютах бюджета повлечет за собой через
+    метод Transaction.save() изменение сумм категорий операции, которое в свою очередь через
+    метод TransactionCategory.save() изменит значения бюджетных регистров BudgetRegister - таким
+    образом будут обновлены данные по бюджету.
+
+    Алгоритм такой:
+    - отбираются счета, по операциям которых нужно произвести пересчет, и определяется дата,
+    с которой нужно производить пересчет;
+    - проверяется наличие операций курсовой разницы в заданном интервале (в каждом месяце
+    по каждому счету должны быть операции положительной и отрицательной курсовой разницы,
+    они имеют дату-время - последние две микросекунды последнего дня месяца), при отсутствии
+    в каком-то месяце этих операций они добавляются;
+    - операции выстраиваются по времени создания (необходимо для расчета остатков),
+    и производится пересчет атрибутов.
+    """
+
+    if not request.user.is_authenticated:
+        return redirect('home')
+    if not (hasattr(request.user, 'profile') and request.user.profile.budget):
+        return redirect('home')
+    if budget_id != request.user.profile.budget.pk:
+        return HttpResponseForbidden("<h1>Доступ запрещен</h1>")
+
+    if return_url[0:1] != '/':
+        return_url = '/' + return_url
+
+    if request.method != 'GET':
+        return redirect(return_url)
+
+    # Отбираются операции перемещения без связи
+    unlinked_movement_transactions = \
+        Transaction.objects.filter(budget_id=budget_id, type='MO+', sender_id__isnull=True).order_by('time_transaction')
+
+    # При наличии несвязанных операций перемещения, процедура завершается, пользователю выдается список этих операций
+    if len(unlinked_movement_transactions) > 0:
+        return redirect(account_transactions_without_join, budget_id, return_url)
+
+    is_error = False
+
+    b = Budget.objects.get(pk=budget_id)
+    budget_base_currency_1 = b.base_currency_1_id
+    budget_base_currency_2 = b.base_currency_2_id
+
+    # Формируем массив счетов для пересчета остатков
+    try:
+        with transaction.atomic():
+            first_transaction_time = None
+            first_transactions = \
+                Transaction.objects.filter(budget_id=budget_id).order_by('time_transaction')[:1]
+            if len(first_transactions) > 0:
+                first_transaction_time = datetime(first_transactions[0].time_transaction.year, 1, 1,
+                                                  0, 0, 0, 0, timezone.utc)
+                # Сначала проверим счета с начальным остатком на наличие ранних операций курсовой разницы
+
+                # Для счетов с ненулевым начальным остатком, у которых операции курсовой разницы начинаются позже первой
+                # операции в бюджете (это возникнет, когда добавили более раннюю операцию по любому из счетов) снесем
+                # флаг валидности и дату валидности остатков переместим на первое января года даты первой операции в
+                # бюджете. Это для создания операций курсовой разницы вначале, ибо бюджет должен учитывать курсовую
+                # разницу на начальным остаткам, начиная с начала года первой операции по бюджету
+                accounts_with_initial_balance = \
+                    Account.objects.filter(budget_id=budget_id).exclude(initial_balance=ftod(0.00, 2))
+                for account_with_initial_balance in accounts_with_initial_balance:
+                    first_transactions = \
+                        Transaction.objects.filter(budget_id=budget_id,
+                                                   account_id=account_with_initial_balance.pk
+                                                   ).order_by('time_transaction')[:1]
+                    if len(first_transactions) > 0:
+                        first_time = datetime(first_transactions[0].time_transaction.year,
+                                              first_transactions[0].time_transaction.month,
+                                              1, 0, 0, 0, 0, timezone.utc)
+                    else:
+                        first_time = datetime(datetime.utcnow().year, datetime.utcnow().month, 1,
+                                              0, 0, 0, 0, timezone.utc)
+
+                    if first_time > first_transaction_time:
+                        # Выявили счет, у которого ненулевой начальный остаток и дата первой операции позже первой
+                        # операции в бюджете
+                        account_with_initial_balance.is_balances_valid = False
+                        account_with_initial_balance.balances_valid_until = first_transaction_time
+                        account_with_initial_balance.save()
+
+            # Сформируем стартовый массив счетов для пересчета по наличию отключенного флага валидности
+            accounts_with_invalid_balances = \
+                [account for account in Account.objects.filter(budget_id=budget_id, is_balances_valid=False)]
+
+            # Пробежимся по операциям перемещения расход у счетов из выше сформированного массива, определим по ним
+            # счет-приемник, и, если у этого счета установлен флаг валидности или дата валидности позже даты
+            # перемещения, то снесем флаг валидности, подвинем дату валидности и добавим этот счет
+            # в массив для пересчета
+            idx = 0
+            while idx < len(accounts_with_invalid_balances):
+                account_with_invalid_balances = accounts_with_invalid_balances[idx]
+                outbound_movements = \
+                    Transaction.objects.filter(budget_id=budget_id,
+                                               account_id=account_with_invalid_balances.pk,
+                                               time_transaction__gte=account_with_invalid_balances.balances_valid_until,
+                                               type='MO-'
+                                               ).order_by('time_transaction')
+                for outbound_movement in outbound_movements:
+                    try:
+                        incoming_movement = outbound_movement.receiver
+                    except Exception as e:
+                        incoming_movement = None
+                    if incoming_movement:
+                        is_account_update = False
+                        if incoming_movement.account.is_balances_valid:
+                            # Снесем флаг валидности у счета-приемника
+                            incoming_movement.account.is_balances_valid = False
+                            is_account_update = True
+                        if incoming_movement.account.balances_valid_until > incoming_movement.time_transaction:
+                            # Установим новую дату валидности у счета-приемника
+                            incoming_movement.account.balances_valid_until = incoming_movement.time_transaction
+                            is_account_update = True
+                        if is_account_update:
+                            # Сохраним счет-приемник
+                            incoming_movement.account.save()
+                            if incoming_movement.account not in accounts_with_invalid_balances[idx + 1:]:
+                                # Добавим в результирующий массив счет-приемник
+                                accounts_with_invalid_balances.append(incoming_movement.account)
+                idx = idx + 1
+
+    except Exception as e:
+        is_error = True
+
+    try:
+        with transaction.atomic():
+            # Проверим наличие Операций курсовой разницы для каждого счета из сформированного массива счетов
+
+            # Вычислим конечную дату интервала проверки (она для всех счетов единая)
+            last_transaction_time = min(MAX_TRANSACTION_DATETIME,
+                                        datetime(datetime.utcnow().year,
+                                                 datetime.utcnow().month,
+                                                 last_day_of_month(datetime.utcnow()).day,
+                                                 23, 59, 59, 999999, timezone.utc))
+            for account_with_invalid_balances in accounts_with_invalid_balances:
+                # Вычислим начальную дату интервала проверки для счета
+                if first_transaction_time:
+                    time_new_transaction = \
+                        max(MIN_TRANSACTION_DATETIME,
+                            datetime(first_transaction_time.year,
+                                     first_transaction_time.month,
+                                     last_day_of_month(first_transaction_time).day,
+                                     23, 59, 59, 999999, timezone.utc))
+                else:
+                    time_new_transaction = last_transaction_time
+
+                # Отберем операции курсовой разницы (возьмем ED-)
+                exchange_difference_transactions = \
+                    Transaction.objects.filter(budget_id=account_with_invalid_balances.budget_id,
+                                               account_id=account_with_invalid_balances.pk,
+                                               type='ED-',
+                                               ).order_by('time_transaction')
+                for t in exchange_difference_transactions:
+                    # Заводим отсутствующие операции курсовой разницы в интервале проверки
+                    while time_new_transaction < t.time_transaction:
+                        # Сначала операцию положительной курсовой разницы
+                        new_ped_transaction = Transaction()
+                        new_ped_transaction.budget = account_with_invalid_balances.budget
+                        new_ped_transaction.account = account_with_invalid_balances
+                        new_ped_transaction.type = 'ED+'
+                        new_ped_transaction.time_transaction = time_new_transaction - timedelta(microseconds=1)
+                        new_ped_transaction.currency = account_with_invalid_balances.currency
+                        new_ped_transaction.budget_year = time_new_transaction.year
+                        new_ped_transaction.budget_month = time_new_transaction.month
+                        new_ped_transaction.user_create = request.user
+                        new_ped_transaction.user_update = request.user
+                        new_ped_transaction.save()
+
+                        new_ped_transaction_category = TransactionCategory()
+                        new_ped_transaction_category.transaction = new_ped_transaction
+                        new_ped_transaction_category.category_id = POSITIVE_EXCHANGE_DIFFERENCE
+                        new_ped_transaction_category.save()
+
+                        # Затем операцию отрицательной курсовой разницы
+                        new_ned_transaction = Transaction()
+                        new_ned_transaction.budget = account_with_invalid_balances.budget
+                        new_ned_transaction.account = account_with_invalid_balances
+                        new_ned_transaction.type = 'ED-'
+                        new_ned_transaction.time_transaction = time_new_transaction
+                        new_ned_transaction.currency = account_with_invalid_balances.currency
+                        new_ned_transaction.budget_year = time_new_transaction.year
+                        new_ned_transaction.budget_month = time_new_transaction.month
+                        new_ned_transaction.user_create = request.user
+                        new_ned_transaction.user_update = request.user
+                        new_ned_transaction.save()
+
+                        new_ned_transaction_category = TransactionCategory()
+                        new_ned_transaction_category.transaction = new_ned_transaction
+                        new_ned_transaction_category.category_id = NEGATIVE_EXCHANGE_DIFFERENCE
+                        new_ned_transaction_category.save()
+
+                        # Вычисляем дату операции курсовой разницы следующего периода
+                        time_new_transaction = time_new_transaction + timedelta(microseconds=10)
+                        time_new_transaction = datetime(time_new_transaction.year,
+                                                        time_new_transaction.month,
+                                                        last_day_of_month(time_new_transaction).day,
+                                                        23, 59, 59, 999999, timezone.utc)
+                    if time_new_transaction == t.time_transaction:
+                        time_new_transaction = time_new_transaction + timedelta(microseconds=10)
+                        time_new_transaction = datetime(time_new_transaction.year,
+                                                        time_new_transaction.month,
+                                                        last_day_of_month(time_new_transaction).day,
+                                                        23, 59, 59, 999999, timezone.utc)
+
+                # После цикла по существующим операциям курсовой разницы пройдемся еще
+                # по следующим месяцам до текущей даты, и также создадим в этих месяцах
+                # операции курсовой разницы
+                while time_new_transaction <= last_transaction_time:
+                    # Сначала операцию положительной курсовой разницы
+                    new_ped_transaction = Transaction()
+                    new_ped_transaction.budget = account_with_invalid_balances.budget
+                    new_ped_transaction.account = account_with_invalid_balances
+                    new_ped_transaction.type = 'ED+'
+                    new_ped_transaction.time_transaction = time_new_transaction - timedelta(microseconds=1)
+                    new_ped_transaction.currency = account_with_invalid_balances.currency
+                    new_ped_transaction.budget_year = time_new_transaction.year
+                    new_ped_transaction.budget_month = time_new_transaction.month
+                    new_ped_transaction.user_create = request.user
+                    new_ped_transaction.user_update = request.user
+                    new_ped_transaction.save()
+
+                    new_ped_transaction_category = TransactionCategory()
+                    new_ped_transaction_category.transaction = new_ped_transaction
+                    new_ped_transaction_category.category_id = POSITIVE_EXCHANGE_DIFFERENCE
+                    new_ped_transaction_category.save()
+
+                    # Затем операцию отрицательной курсовой разницы
+                    new_ned_transaction = Transaction()
+                    new_ned_transaction.budget = account_with_invalid_balances.budget
+                    new_ned_transaction.account = account_with_invalid_balances
+                    new_ned_transaction.type = 'ED-'
+                    new_ned_transaction.time_transaction = time_new_transaction
+                    new_ned_transaction.currency = account_with_invalid_balances.currency
+                    new_ned_transaction.budget_year = time_new_transaction.year
+                    new_ned_transaction.budget_month = time_new_transaction.month
+                    new_ned_transaction.user_create = request.user
+                    new_ned_transaction.user_update = request.user
+                    new_ned_transaction.save()
+
+                    new_ned_transaction_category = TransactionCategory()
+                    new_ned_transaction_category.transaction = new_ned_transaction
+                    new_ned_transaction_category.category_id = NEGATIVE_EXCHANGE_DIFFERENCE
+                    new_ned_transaction_category.save()
+
+                    # Вычисляем дату операции курсовой разницы следующего периода
+                    time_new_transaction = time_new_transaction + timedelta(microseconds=10)
+                    time_new_transaction = datetime(time_new_transaction.year,
+                                                    time_new_transaction.month,
+                                                    last_day_of_month(time_new_transaction).day,
+                                                    23, 59, 59, 999999, timezone.utc)
+
+    except Exception as e:
+        is_error = True
+
+    # Если были ошибки, то прерываем процедуру
+    if is_error:
+        return redirect(return_url)
+
+    # Расширим массив счетов дополнительными атрибутами
+    # Каждый элемент это словарь:
+    # - счет;
+    # - список операций для пересчета;
+    # - текущий номер операции;
+    # - текущая операция;
+    # - предыдущая операция.
+    accounts_with_invalid_balances = \
+        [{"account": account, "transactions": None, "idx": 0, "transaction": None, "previous_transaction": None}
+         for account in accounts_with_invalid_balances]
+
+    # Отбираем операции по счетам из массива и записываем их в соответствующий атрибут массива
+    transactions_count = 0
+    for account_with_invalid_balances in accounts_with_invalid_balances:
+        account_with_invalid_balances['transactions'] = \
+            Transaction.objects.filter(budget_id=account_with_invalid_balances['account'].budget_id,
+                                       account_id=account_with_invalid_balances['account'].pk,
+                                       time_transaction__gte=account_with_invalid_balances[
+                                           'account'].balances_valid_until,
+                                       ).order_by('time_transaction')
+
+        if len(account_with_invalid_balances['transactions']) > 0:
+            account_with_invalid_balances['transaction'] = account_with_invalid_balances['transactions'][0]
+
+        previous_transactions = \
+            Transaction.objects.filter(budget_id=account_with_invalid_balances['account'].budget_id,
+                                       account_id=account_with_invalid_balances['account'].pk,
+                                       time_transaction__lt=account_with_invalid_balances[
+                                           'account'].balances_valid_until,
+                                       ).order_by('-time_transaction')[:1]
+        if len(previous_transactions) > 0:
+            account_with_invalid_balances['previous_transaction'] = previous_transactions[0]
+
+        transactions_count = transactions_count + len(account_with_invalid_balances['transactions'])
+
+    # Запускаем главный цикл
+    n = 1
+    try:
+        while True:
+            # Отбираем операцию для пересчета в данной итерации - берем самую раннюю из оставшихся по всем счетам
+            # Операции перемещения расход в первую очередь при наличии нескольких операций в одно время
+            processed_transaction = None
+            processed_account_idx = None
+            for i, account_with_invalid_balances in enumerate(accounts_with_invalid_balances):
+                if account_with_invalid_balances['transaction']:
+                    if not processed_transaction:
+                        processed_transaction = account_with_invalid_balances['transaction']
+                        processed_account_idx = i
+                    else:
+                        if processed_transaction.time_transaction == \
+                                account_with_invalid_balances['transaction'].time_transaction:
+                            if account_with_invalid_balances['transaction'].type == 'MO-':
+                                processed_transaction = account_with_invalid_balances['transaction']
+                                processed_account_idx = i
+                        elif processed_transaction.time_transaction > \
+                                account_with_invalid_balances['transaction'].time_transaction:
+                            processed_transaction = account_with_invalid_balances['transaction']
+                            processed_account_idx = i
+
+            # Если не отобрали операцию, значит они закончились - выходим из главного цикла!
+            if not processed_transaction:
+                break
+
+            # Вытаскиваем обрабатываемую операцию из базы (для консистентности)
+            processed_transaction = Transaction.objects.get(pk=processed_transaction.pk)
+
+            # И предыдущую операцию тоже
+            previous_transaction = accounts_with_invalid_balances[processed_account_idx]['previous_transaction']
+            if previous_transaction:
+                previous_transaction = Transaction.objects.get(pk=previous_transaction.pk)
+
+            # Запускаем транзакцию
+            with transaction.atomic():
+
+                # 1. Вычисляем остаток по счету в валюте счета для данной операции
+                if previous_transaction:
+                    processed_transaction.balance_acc_cur = previous_transaction.balance_acc_cur + \
+                                                            processed_transaction.amount_acc_cur
+                else:
+                    processed_transaction.balance_acc_cur = processed_transaction.account.initial_balance + \
+                                                            processed_transaction.amount_acc_cur
+
+                # 2. Проверим заведены ли категории у операции, если какой-то причине нет, то заведем по дефолту
+                if processed_transaction.type in ['CRE', 'DEB']:
+                    transaction_categories = TransactionCategory.objects.filter(transaction_id=processed_transaction.pk)
+                    if len(transaction_categories) == 0:
+                        new_transaction_category = TransactionCategory()
+                        new_transaction_category.transaction = processed_transaction
+                        new_transaction_category.amount_acc_cur = processed_transaction.amount_acc_cur
+                        if processed_transaction.type == 'CRE':
+                            new_transaction_category.category_id = DEFAULT_INC_CATEGORY
+                        else:
+                            new_transaction_category.category_id = DEFAULT_EXP_CATEGORY
+                        new_transaction_category.save()
+
+                # 3. Вычисляем суммы операции в базовых валютах и остатки по счету в базовых валютах
+                if processed_transaction.type in ['MO+', 'CRE', 'DEB']:
+                    # Все приходные, расходные операции и операции перемещения приход получают рыночные курсы,
+                    # суммы операции в базовых валютах через произведения этих курсов на сумму операции в валюте счета,
+                    # а остатки в базовых валютах из остатков предыдущей операции с добавлением сумм текущей
+
+                    processed_transaction.rate_base_cur_1 = \
+                        CurrencyRate.get_rate(budget_base_currency_1,
+                                              processed_transaction.account.currency_id,
+                                              processed_transaction.time_transaction)
+                    processed_transaction.rate_base_cur_2 = \
+                        CurrencyRate.get_rate(budget_base_currency_2,
+                                              processed_transaction.account.currency_id,
+                                              processed_transaction.time_transaction)
+
+                    processed_transaction.amount_base_cur_1 = \
+                        ftod(processed_transaction.amount_acc_cur *
+                             processed_transaction.rate_base_cur_1, 2)
+                    processed_transaction.amount_base_cur_2 = \
+                        ftod(processed_transaction.amount_acc_cur *
+                             processed_transaction.rate_base_cur_2, 2)
+
+                    if previous_transaction:
+                        processed_transaction.balance_base_cur_1 = previous_transaction.balance_base_cur_1 + \
+                                                                   processed_transaction.amount_base_cur_1
+                        processed_transaction.balance_base_cur_2 = previous_transaction.balance_base_cur_2 + \
+                                                                   processed_transaction.amount_base_cur_2
+                    else:
+                        processed_transaction.balance_base_cur_1 = \
+                            ftod(processed_transaction.account.initial_balance *
+                                 CurrencyRate.get_rate(budget_base_currency_1,
+                                                       processed_transaction.account.currency_id,
+                                                       processed_transaction.time_transaction), 2) + \
+                            processed_transaction.amount_base_cur_1
+                        processed_transaction.balance_base_cur_2 = \
+                            ftod(processed_transaction.account.initial_balance *
+                                 CurrencyRate.get_rate(budget_base_currency_2,
+                                                       processed_transaction.account.currency_id,
+                                                       processed_transaction.time_transaction), 2) + \
+                            processed_transaction.amount_base_cur_2
+
+                elif processed_transaction.type in ['MO-']:
+                    # Операции перемещения расход получают рыночные курсы по дате операции-приемника, суммы операции в
+                    # базовых валютах через произведения этих курсов на инвертированную сумму операции в валюте счета
+                    # операции-приемника, а остатки в базовых валютах из остатков предыдущей операции
+                    # с добавлением сумм текущей
+                    # ВАЖНО! Расчет сумм в базовых валютах производится по сумме в валюте счета операции-приемника,
+                    # так как обороты по операциям перемещения должны совпадать, а курсовая разница для операций
+                    # покупки-продажи валюты (это когда счет-отправитель и счет-получатель в разных валютах) должна
+                    # отражаться на счете-отправителе
+
+                    receiver_transaction = processed_transaction.receiver
+
+                    processed_transaction.rate_base_cur_1 = \
+                        CurrencyRate.get_rate(budget_base_currency_1,
+                                              receiver_transaction.account.currency_id,
+                                              receiver_transaction.time_transaction)
+                    processed_transaction.rate_base_cur_2 = \
+                        CurrencyRate.get_rate(budget_base_currency_2,
+                                              receiver_transaction.account.currency_id,
+                                              receiver_transaction.time_transaction)
+
+                    processed_transaction.amount_base_cur_1 = \
+                        ftod(-receiver_transaction.amount_acc_cur *
+                             processed_transaction.rate_base_cur_1, 2)
+                    processed_transaction.amount_base_cur_2 = \
+                        ftod(-receiver_transaction.amount_acc_cur *
+                             processed_transaction.rate_base_cur_2, 2)
+
+                    if previous_transaction:
+                        processed_transaction.balance_base_cur_1 = \
+                            previous_transaction.balance_base_cur_1 + \
+                            processed_transaction.amount_base_cur_1
+                        processed_transaction.balance_base_cur_2 = \
+                            previous_transaction.balance_base_cur_2 + \
+                            processed_transaction.amount_base_cur_2
+                    else:
+                        processed_transaction.balance_base_cur_1 = \
+                            ftod(processed_transaction.account.initial_balance *
+                                 CurrencyRate.get_rate(budget_base_currency_1,
+                                                       processed_transaction.account.currency_id,
+                                                       processed_transaction.time_transaction), 2) + \
+                            processed_transaction.amount_base_cur_1
+                        processed_transaction.balance_base_cur_2 = \
+                            ftod(processed_transaction.account.initial_balance *
+                                 CurrencyRate.get_rate(budget_base_currency_2,
+                                                       processed_transaction.account.currency_id,
+                                                       processed_transaction.time_transaction), 2) + \
+                            processed_transaction.amount_base_cur_2
+
+                elif processed_transaction.type in ['ED+', 'ED-']:
+                    # Операции курсовой разницы получают рыночный курс, остаток в базовой валюте как произведение
+                    # остатка в валюте счета на рыночный курс, сумма операции в базовой валюте как разницу
+                    # остатка от предыдущей операции и вычисленным остатком
+
+                    processed_transaction.rate_base_cur_1 = \
+                        CurrencyRate.get_rate(budget_base_currency_1,
+                                              processed_transaction.account.currency_id,
+                                              processed_transaction.time_transaction)
+                    processed_transaction.rate_base_cur_2 = \
+                        CurrencyRate.get_rate(budget_base_currency_2,
+                                              processed_transaction.account.currency_id,
+                                              processed_transaction.time_transaction)
+
+                    new_balance_base_cur_1 = \
+                        ftod(processed_transaction.balance_acc_cur *
+                             processed_transaction.rate_base_cur_1, 2)
+                    new_balance_base_cur_2 = \
+                        ftod(processed_transaction.balance_acc_cur *
+                             processed_transaction.rate_base_cur_2, 2)
+
+                    if previous_transaction:
+                        new_amount_base_cur_1 = new_balance_base_cur_1 - previous_transaction.balance_base_cur_1
+                        new_amount_base_cur_2 = new_balance_base_cur_2 - previous_transaction.balance_base_cur_2
+                    else:
+                        new_amount_base_cur_1 = \
+                            new_balance_base_cur_1 - \
+                            ftod(processed_transaction.account.initial_balance *
+                                 CurrencyRate.get_rate(budget_base_currency_1,
+                                                       processed_transaction.account.currency_id,
+                                                       datetime(processed_transaction.time_transaction.year,
+                                                                processed_transaction.time_transaction.month,
+                                                                1, 0, 0, 0, 0, timezone.utc) -
+                                                       timedelta(microseconds=1)), 2)
+                        new_amount_base_cur_2 = \
+                            new_balance_base_cur_2 - \
+                            ftod(processed_transaction.account.initial_balance *
+                                 CurrencyRate.get_rate(budget_base_currency_2,
+                                                       processed_transaction.account.currency_id,
+                                                       datetime(processed_transaction.time_transaction.year,
+                                                                processed_transaction.time_transaction.month,
+                                                                1, 0, 0, 0, 0, timezone.utc) -
+                                                       timedelta(microseconds=1)), 2)
+
+                    # Вычисленная курсовая разница записывается в операцию положительной курсовой разницы (ED+),
+                    # если она положительна, иначе в операцию отрицательной курсовой разницы (ED-).
+                    if processed_transaction.type == 'ED+':
+
+                        if new_amount_base_cur_1 >= 0:
+                            processed_transaction.amount_base_cur_1 = new_amount_base_cur_1
+                            processed_transaction.balance_base_cur_1 = new_balance_base_cur_1
+                        else:
+                            processed_transaction.amount_base_cur_1 = ftod(0.00, 2)
+                            if previous_transaction:
+                                processed_transaction.balance_base_cur_1 = previous_transaction.balance_base_cur_1
+                            else:
+                                processed_transaction.balance_base_cur_1 = \
+                                    ftod(processed_transaction.account.initial_balance *
+                                         CurrencyRate.get_rate(budget_base_currency_1,
+                                                               processed_transaction.account.currency_id,
+                                                               datetime(processed_transaction.time_transaction.year,
+                                                                        processed_transaction.time_transaction.month,
+                                                                        1, 0, 0, 0, 0, timezone.utc) -
+                                                               timedelta(microseconds=1)), 2)
+
+                        if new_amount_base_cur_2 >= 0:
+                            processed_transaction.amount_base_cur_2 = new_amount_base_cur_2
+                            processed_transaction.balance_base_cur_2 = new_balance_base_cur_2
+                        else:
+                            processed_transaction.amount_base_cur_2 = ftod(0.00, 2)
+                            if previous_transaction:
+                                processed_transaction.balance_base_cur_2 = previous_transaction.balance_base_cur_2
+                            else:
+                                processed_transaction.balance_base_cur_2 = \
+                                    ftod(processed_transaction.account.initial_balance *
+                                         CurrencyRate.get_rate(budget_base_currency_2,
+                                                               processed_transaction.account.currency_id,
+                                                               datetime(processed_transaction.time_transaction.year,
+                                                                        processed_transaction.time_transaction.month,
+                                                                        1, 0, 0, 0, 0, timezone.utc) -
+                                                               timedelta(microseconds=1)), 2)
+
+                    elif processed_transaction.type == 'ED-':
+
+                        if new_amount_base_cur_1 <= 0:
+                            processed_transaction.amount_base_cur_1 = new_amount_base_cur_1
+                            processed_transaction.balance_base_cur_1 = new_balance_base_cur_1
+                        else:
+                            processed_transaction.amount_base_cur_1 = ftod(0.00, 2)
+                            if previous_transaction:
+                                processed_transaction.balance_base_cur_1 = previous_transaction.balance_base_cur_1
+                            else:
+                                processed_transaction.balance_base_cur_1 = \
+                                    ftod(processed_transaction.account.initial_balance *
+                                         CurrencyRate.get_rate(budget_base_currency_1,
+                                                               processed_transaction.account.currency_id,
+                                                               datetime(processed_transaction.time_transaction.year,
+                                                                        processed_transaction.time_transaction.month,
+                                                                        1, 0, 0, 0, 0, timezone.utc) -
+                                                               timedelta(microseconds=1)), 2)
+
+                        if new_amount_base_cur_2 <= 0:
+                            processed_transaction.amount_base_cur_2 = new_amount_base_cur_2
+                            processed_transaction.balance_base_cur_2 = new_balance_base_cur_2
+                        else:
+                            processed_transaction.amount_base_cur_2 = ftod(0.00, 2)
+                            if previous_transaction:
+                                processed_transaction.balance_base_cur_2 = previous_transaction.balance_base_cur_2
+                            else:
+                                processed_transaction.balance_base_cur_2 = \
+                                    ftod(processed_transaction.account.initial_balance *
+                                         CurrencyRate.get_rate(budget_base_currency_2,
+                                                               processed_transaction.account.currency_id,
+                                                               datetime(processed_transaction.time_transaction.year,
+                                                                        processed_transaction.time_transaction.month,
+                                                                        1, 0, 0, 0, 0, timezone.utc) -
+                                                               timedelta(microseconds=1)), 2)
+
+                # 4. Сохраним изменения в операции (будет каскад обновлений: категории транзакций и бюджетные регистры
+                processed_transaction.save()
+
+                # 5. Вычисляем новую дату валидности у счета и сохраним
+                accounts_with_invalid_balances[processed_account_idx]['account'].balances_valid_until = \
+                    processed_transaction.time_transaction + timedelta(microseconds=1)
+                accounts_with_invalid_balances[processed_account_idx]['account'].save(
+                    update_fields=['balances_valid_until'])
+
+            # Все необходимые действия по пересчету с операцией совершены!
+            # Берем следующую транзакцию у данного счета
+            accounts_with_invalid_balances[processed_account_idx]['previous_transaction'] = processed_transaction
+            accounts_with_invalid_balances[processed_account_idx]['idx'] = \
+                accounts_with_invalid_balances[processed_account_idx]['idx'] + 1
+            if accounts_with_invalid_balances[processed_account_idx]['idx'] >= \
+                    len(accounts_with_invalid_balances[processed_account_idx]['transactions']):
+                accounts_with_invalid_balances[processed_account_idx]['transaction'] = None
+            else:
+                next_idx = accounts_with_invalid_balances[processed_account_idx]['idx']
+                accounts_with_invalid_balances[processed_account_idx]['transaction'] = \
+                    accounts_with_invalid_balances[processed_account_idx]['transactions'][next_idx]
+
+            n = n + 1
+
+        # В конце процедуры у всех счетов, участвующих в пересчете, взводим флаг валидности остатков
+        for account_with_invalid_balances in accounts_with_invalid_balances:
+            with transaction.atomic():
+                account_with_invalid_balances['account'].is_balances_valid = True
+                account_with_invalid_balances['account'].save(update_fields=['is_balances_valid'])
+
+        # Еще нужно пересчитать остатки в Бюджетных оборотах счетов
+
+        # Отберем все счета, у которых инвалид в бюджетных оборотах
+        accounts_with_invalid_turnovers = Account.objects.filter(budget_id=budget_id, is_turnovers_valid=False)
+        for account_with_invalid_turnovers in accounts_with_invalid_turnovers:
+            with transaction.atomic():
+                last_budget_period = None
+                # Сначала получим последний валидный остаток
+                previous_account_turnovers = \
+                    AccountTurnover.objects.filter(budget_id=budget_id,
+                                                   account_id=account_with_invalid_turnovers.pk,
+                                                   budget_period__lt=
+                                                   account_with_invalid_turnovers.turnovers_valid_until
+                                                   ).order_by('-budget_period')[:1]
+                account_turnovers = \
+                    AccountTurnover.objects.filter(budget_id=budget_id,
+                                                   account_id=account_with_invalid_turnovers.pk,
+                                                   budget_period__gte=
+                                                   account_with_invalid_turnovers.turnovers_valid_until
+                                                   ).order_by('budget_period')
+                if previous_account_turnovers:
+                    # Получим начальный остаток из предыдущего периода
+                    previous_balance_base_cur_1 = previous_account_turnovers[0].end_balance_base_cur_1
+                    previous_balance_base_cur_2 = previous_account_turnovers[0].end_balance_base_cur_2
+                else:
+                    # Рассчитаем начальный остаток из начального остатка счета
+                    if account_turnovers:
+                        previous_balance_base_cur_1 = \
+                            ftod(account_with_invalid_turnovers.initial_balance *
+                                 CurrencyRate.get_rate(budget_base_currency_1,
+                                                       account_with_invalid_turnovers.currency_id,
+                                                       account_turnovers[0].budget_period -
+                                                       timedelta(days=32)), 2)
+                        previous_balance_base_cur_2 = \
+                            ftod(account_with_invalid_turnovers.initial_balance *
+                                 CurrencyRate.get_rate(budget_base_currency_2,
+                                                       account_with_invalid_turnovers.currency_id,
+                                                       account_turnovers[0].budget_period -
+                                                       timedelta(days=32)), 2)
+                    else:
+                        previous_balance_base_cur_1 = \
+                            ftod(account_with_invalid_turnovers.initial_balance *
+                                 CurrencyRate.get_rate(budget_base_currency_1,
+                                                       account_with_invalid_turnovers.currency_id,
+                                                       account_with_invalid_turnovers.turnovers_valid_until -
+                                                       timedelta(days=2)), 2)
+                        previous_balance_base_cur_2 = \
+                            ftod(account_with_invalid_turnovers.initial_balance *
+                                 CurrencyRate.get_rate(budget_base_currency_2,
+                                                       account_with_invalid_turnovers.currency_id,
+                                                       account_with_invalid_turnovers.turnovers_valid_until -
+                                                       timedelta(days=2)), 2)
+
+                # Теперь в цикле пробежим по последующим периодам и пересчитаем остатки через обороты
+                # от последнего валидного остатка
+                for account_turnover in account_turnovers:
+                    account_turnover.begin_balance_base_cur_1 = previous_balance_base_cur_1
+                    account_turnover.begin_balance_base_cur_2 = previous_balance_base_cur_2
+                    account_turnover.end_balance_base_cur_1 = \
+                        previous_balance_base_cur_1 + \
+                        account_turnover.credit_turnover_base_cur_1 + \
+                        account_turnover.debit_turnover_base_cur_1
+                    account_turnover.end_balance_base_cur_2 = \
+                        previous_balance_base_cur_2 + \
+                        account_turnover.credit_turnover_base_cur_2 + \
+                        account_turnover.debit_turnover_base_cur_2
+                    account_turnover.save()
+                    previous_balance_base_cur_1 = account_turnover.end_balance_base_cur_1
+                    previous_balance_base_cur_2 = account_turnover.end_balance_base_cur_2
+                    last_budget_period = account_turnover.budget_period
+
+                # Установим на счете флаг валидности бюджетных остатков и новую дату валидности их же
+                account_with_invalid_turnovers.is_turnovers_valid = True
+                if last_budget_period:
+                    turnovers_valid_until = last_budget_period + timedelta(days=32)
+                    turnovers_valid_until = datetime(turnovers_valid_until.year, turnovers_valid_until.month,
+                                                     1, 0, 0, 0, 0, timezone.utc)
+                    account_with_invalid_turnovers.turnovers_valid_until = turnovers_valid_until
+                account_with_invalid_turnovers.save()
+
+    except Exception as e:
+        print('Что-то в главном цикле процедуры пересчета остатков пошло не так: ' + str(e))
+
+    return redirect(return_url)
+
+
+@login_required
+def account_transactions_without_join(request, budget_id, return_url):
+    """
+    Функция списка операций перемещения без связи
+    """
+    if not request.user.is_authenticated:
+        return redirect('home')
+    if not (hasattr(request.user, 'profile') and request.user.profile.budget):
+        return redirect('home')
+    if budget_id != request.user.profile.budget.pk:
+        return HttpResponseForbidden("<h1>Доступ запрещен</h1>")
+
+    if return_url[0:1] != '/':
+        return_url = '/' + return_url
+
+    accounts_with_unlinked_transactions = \
+        (Account.objects.distinct()
+         .filter(budget_id=budget_id,
+                 transactions__type__icontains='MO',
+                 transactions__sender__isnull=True,
+                 transactions__receiver__isnull=True)
+         .order_by('name')
+         )
+
+    if len(accounts_with_unlinked_transactions) == 0:
+        return redirect(return_url)
+
+    return render(request, 'main/account_transactions_without_join.html',
+                  get_u_context(request,
+                                {'title': 'Счета с операциями перемещения без связи',
+                                 'accounts_with_unlinked_transactions': accounts_with_unlinked_transactions,
+                                 'work_menu': True,
+                                 'account_selected': -10,
+                                 'selected_menu': 'account_transactions',
+                                 'return_url': return_url,
+                                 }))
