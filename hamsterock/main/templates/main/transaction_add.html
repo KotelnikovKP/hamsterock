@@ -1,0 +1,117 @@
+{% extends 'main/base.html' %}
+
+{% block scripts %}
+<script>
+function change_type(f) {
+    if (f.type.selectedIndex == 1) {
+        document.getElementById("p_id_category_inc").style.display = "";
+        document.getElementById("pe_id_category_inc").style.display = "";
+        document.getElementById("p_id_category_exp").style.display = "none";
+        document.getElementById("pe_id_category_exp").style.display = "none";
+        document.getElementById("p_id_budget_object").style.display = "";
+        document.getElementById("pe_id_budget_object").style.display = "";
+        document.getElementById("p_id_project").style.display = "";
+        document.getElementById("pe_id_project").style.display = "";
+        document.getElementById("ph_id_type").style.display = "none";
+    } else if (f.type.selectedIndex == 2) {
+        document.getElementById("p_id_category_inc").style.display = "none";
+        document.getElementById("pe_id_category_inc").style.display = "none";
+        document.getElementById("p_id_category_exp").style.display = "";
+        document.getElementById("pe_id_category_exp").style.display = "";
+        document.getElementById("p_id_budget_object").style.display = "";
+        document.getElementById("pe_id_budget_object").style.display = "";
+        document.getElementById("p_id_project").style.display = "";
+        document.getElementById("pe_id_project").style.display = "";
+        document.getElementById("ph_id_type").style.display = "none";
+    } else if (f.type.selectedIndex == 3) {
+        document.getElementById("p_id_category_inc").style.display = "none";
+        document.getElementById("pe_id_category_inc").style.display = "none";
+        document.getElementById("p_id_category_exp").style.display = "none";
+        document.getElementById("pe_id_category_exp").style.display = "none";
+        document.getElementById("p_id_budget_object").style.display = "none";
+        document.getElementById("pe_id_budget_object").style.display = "none";
+        document.getElementById("p_id_project").style.display = "none";
+        document.getElementById("pe_id_project").style.display = "none";
+        document.getElementById("ph_id_type").style.display = "";
+    } else if (f.type.selectedIndex == 4) {
+        document.getElementById("p_id_category_inc").style.display = "none";
+        document.getElementById("pe_id_category_inc").style.display = "none";
+        document.getElementById("p_id_category_exp").style.display = "none";
+        document.getElementById("pe_id_category_exp").style.display = "none";
+        document.getElementById("p_id_budget_object").style.display = "none";
+        document.getElementById("pe_id_budget_object").style.display = "none";
+        document.getElementById("p_id_project").style.display = "none";
+        document.getElementById("pe_id_project").style.display = "none";
+        document.getElementById("ph_id_type").style.display = "none";
+    } else {
+        document.getElementById("p_id_category_inc").style.display = "none";
+        document.getElementById("pe_id_category_inc").style.display = "none";
+        document.getElementById("p_id_category_exp").style.display = "none";
+        document.getElementById("pe_id_category_exp").style.display = "none";
+        document.getElementById("p_id_budget_object").style.display = "none";
+        document.getElementById("pe_id_budget_object").style.display = "none";
+        document.getElementById("p_id_project").style.display = "none";
+        document.getElementById("pe_id_project").style.display = "none";
+        document.getElementById("ph_id_type").style.display = "none";
+    }
+}
+function change_currency(f) {
+    if (f.currency.value == {{ account_currency_id }}) {
+        document.getElementById("p_id_amount").style.display = "none";
+    } else {
+        document.getElementById("p_id_amount").style.display = "";
+    }
+}
+</script>
+{% endblock %}
+
+{% block content %}
+<h1>{{title}}</h1>
+<form method="post">
+    {% csrf_token %}
+    <div class="form-error">{{ form.non_field_errors }}</div>
+    {% for f in form %}
+
+        {% if f.id_for_label == "id_place" %}
+    <div class="form-error">{{ category_form.non_field_errors }}</div>
+            {% for cf in category_form %}
+                {% if cf.id_for_label != "id_transaction" and cf.id_for_label != "id_category" and cf.id_for_label != "id_amount_acc_cur" and cf.id_for_label != "id_budget_year" and cf.id_for_label != "id_budget_month" %}
+                    {% if cf.id_for_label == "id_category_inc" and form.type.value != 'CRE' or cf.id_for_label == "id_category_exp" and form.type.value != 'DEB' or cf.id_for_label == "id_budget_object" and form.type.value == 'MO+' or cf.id_for_label == "id_budget_object" and form.type.value == 'MO-' %}
+    <p class="form-p" id="p_{{ cf.id_for_label }}" style="display: none;">
+                    {% else %}
+    <p class="form-p" id="p_{{ cf.id_for_label }}">
+                    {% endif %}
+        <label class="form-label" for="p_{{ cf.id_for_label }}">{{ cf.label }}: </label>{{ cf }}</p>
+                    {% if cf.help_text %}
+    <p class="form-p-help" id="ph_{{ cf.id_for_label }}"><label class="form-label-help" for="ph_{{ cf.id_for_label }}">{{ cf.help_text }}</label></p>
+                    {% endif %}
+    <div id="pe_{{ cf.id_for_label }}" class="form-error">{{ cf.errors }}</div>
+                {% endif %}
+            {% endfor %}
+        {% endif %}
+
+        {% if f.id_for_label != "id_budget" and f.id_for_label != "id_account" and f.id_for_label != "id_user_create" and f.id_for_label != "id_user_update" and f.id_for_label != "id_time_transaction" %}
+            {% if f.id_for_label != "id_mcc_code" and f.id_for_label != "id_banks_category" and f.id_for_label != "id_banks_description" or is_account_not_cash %}
+                {% if f.id_for_label == "id_amount" and form.currency.value == account_currency_id or f.id_for_label == "id_project" and form.type.value != 'CRE' and form.type.value != 'DEB' %}
+    <p class="form-p" id="p_{{ f.id_for_label }}" style="display: none;">
+                {% else %}
+    <p class="form-p" id="p_{{ f.id_for_label }}">
+                {% endif %}
+        <label class="form-label" for="p_{{ f.id_for_label }}">{{ f.label }}{% if f.id_for_label == "id_amount_acc_cur" %} ({{ account_currency }}){% endif %}: </label>{{ f }}</p>
+                {% if f.help_text %}
+                    {% if f.id_for_label == "id_type" and form.type.value == 'MO+' %}
+    <p class="form-p-help" id="ph_{{ f.id_for_label }}">
+                    {% else %}
+    <p class="form-p-help" id="ph_{{ f.id_for_label }}" style="display: none;">
+                    {% endif %}
+        <label class="form-label-help" for="ph_{{ f.id_for_label }}">{{ f.help_text }}</label></p>
+                {% endif %}
+    <div id="pe_{{ f.id_for_label }}" class="form-error">{% autoescape off %}{{ f.errors }}{% endautoescape %}</div>
+            {% endif %}
+        {% endif %}
+
+    {% endfor %}
+    <p> </p>
+    <button type="submit">Сохранить изменения</button> <a href="{{ return_url }}"><input type="button" value="Отмена"></a>
+</form>
+{% endblock %}

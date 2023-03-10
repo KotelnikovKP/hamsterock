@@ -6,11 +6,15 @@ from django.contrib.auth.mixins import LoginRequiredMixin
 from django.contrib.auth.views import LoginView, PasswordChangeView, PasswordChangeDoneView
 from django.core.exceptions import ObjectDoesNotExist, MultipleObjectsReturned
 from django.db import transaction, DataError, IntegrityError
+from django.db.models import F, Value
+from django.db.models.functions import Concat
 from django.http import HttpResponseNotFound, HttpResponseForbidden, HttpResponseServerError
 from django.shortcuts import render, redirect, get_object_or_404
 from django.urls import reverse_lazy
+from django.utils import formats, translation
 from django.views.generic import FormView, CreateView, UpdateView, DeleteView, ListView
 
+from .filters import *
 from .forms import *
 from .utils import *
 
@@ -476,7 +480,7 @@ def no_account(request):
         budget_owner_name = budget_owner.username
     budget_name = request.user.profile.budget.name
     return render(request, 'main/account_does_not_exist.html',
-                  get_u_context(request, {'title': 'Добавление первого счета/кошелека',
+                  get_u_context(request, {'title': 'Добавление первого счета/кошелька',
                                           'budget_owner_name': budget_owner_name,
                                           'budget_name': budget_name}))
 
@@ -577,9 +581,8 @@ class DeleteAccount(LoginRequiredMixin, DataMixin, DeleteView):
 
     def form_valid(self, form):
         a = self.get_object()
-        # Если есль операции по счету, то удалять счет нельзя
-        # if Transaction.objects.filter(account_id=a.pk).count() > 0:
-        if False:
+        # Если есть операции по счету, то удалять счет нельзя
+        if Transaction.objects.filter(account_id=a.pk).count() > 0:
             return render(self.request, 'main/account_delete.html',
                           get_u_context(self.request, {'title': 'Удаление счета/кошелька - ' + str(a.name) + ' (' +
                                                                 str(a.currency.iso_code) + ')',
@@ -720,8 +723,7 @@ class DeleteProject(LoginRequiredMixin, DataMixin, DeleteView):
     def form_valid(self, form):
         p = self.get_object()
         # Если есть операции с текущим проектом, то удалять его нельзя
-        # if Transaction.objects.filter(project_id=p.pk).count() > 0:
-        if False:
+        if Transaction.objects.filter(project_id=p.pk).count() > 0:
             return render(self.request, 'main/project_delete.html',
                           get_u_context(self.request, {'title': 'Удаление проекта - ' + str(p.name),
                                                        'account_selected': -1,
@@ -863,8 +865,7 @@ class DeleteBudgetObject(LoginRequiredMixin, DataMixin, DeleteView):
         is_transactions_exist = False
         for category in categories:
             # Если есть категории с бюджетным объектом в операциях, то удалять бюджетный объект нельзя
-            # if TransactionCategory.objects.filter(category_id=category.pk).count() > 0:
-            if False:
+            if TransactionCategory.objects.filter(category_id=category.pk).count() > 0:
                 is_transactions_exist = True
                 break
         if is_transactions_exist:
@@ -890,30 +891,1004 @@ class DeleteBudgetObject(LoginRequiredMixin, DataMixin, DeleteView):
         return super(DeleteBudgetObject, self).dispatch(request, *args, **kwargs)
 
 
-@login_required
-def account_transactions(request, account_id):
+class AccountTransactions(LoginRequiredMixin, DataMixin, ListView):
     """
-    Функция списка операций по счету
+    Класс списка операций по счету
+    """
+    model = Transaction
+    template_name = 'main/account_transactions.html'
+    context_object_name = 'transactions'
+    allow_empty = True
+    account_transaction_filter = None
+
+    def get_context_data(self, *, object_list=None, **kwargs):
+        context = super().get_context_data(**kwargs)
+        a = get_object_or_404(Account, pk=self.kwargs['account_id'])
+        c_def = self.get_user_context(title='Операции по счету/кошельку - ' + str(a),
+                                      filter=self.account_transaction_filter,
+                                      account_selected=a.id,
+                                      account_currency_id=a.currency.id,
+                                      account_currency_iso=a.currency.iso_code,
+                                      account_available_balance=a.balance + a.credit_limit,
+                                      account_balance=a.balance,
+                                      account_credit_limit=a.credit_limit,
+                                      account_type=a.type,
+                                      account_budget=a.budget.id,
+                                      work_menu=True,
+                                      selected_menu='account_transactions')
+        return dict(list(context.items()) + list(c_def.items()))
+
+    def dispatch(self, request, *args, **kwargs):
+        a = get_object_or_404(Account, pk=self.kwargs['account_id'])
+        if request.user.is_authenticated:
+            if not (hasattr(request.user, 'profile') and request.user.profile.budget):
+                return redirect('home')
+            if a.budget != request.user.profile.budget:
+                return self.handle_no_permission()
+        if not self.request.user.profile.budget:
+            b_id = 0
+        else:
+            b_id = self.request.user.profile.budget.pk
+
+        self.account_transaction_filter = \
+            AccountTransactionsFilter(
+                request.GET, request=request,
+                queryset=Transaction.objects.filter(budget_id=b_id, account_id=self.kwargs['account_id']).exclude(
+                    type__in=['ED+', 'ED-']).select_related('budget', 'account', 'currency', 'sender')
+            )
+        self.queryset = self.account_transaction_filter.qs
+        return super(AccountTransactions, self).dispatch(request, *args, **kwargs)
+
+
+@login_required
+def add_transaction(request, account_id, return_url):
+    """
+    Функция добавления операции.
+    Участвуют две модели Transaction и TransactionCategory.
     """
     if not request.user.is_authenticated:
         return redirect('home')
     if not (hasattr(request.user, 'profile') and request.user.profile.budget):
         return redirect('home')
+
     a = get_object_or_404(Account, pk=account_id)
+
     if a.budget != request.user.profile.budget:
+        return HttpResponseForbidden("<h1>Доступ запрещен</h1>")
+
+    if return_url[0:1] != '/':
+        return_url = '/' + return_url
+
+    if request.method == 'POST':
+        datetime_formats = formats.get_format("DATETIME_INPUT_FORMATS", lang=translation.get_language())
+        datetime_formats.append(datetime_formats[0][:8])
+        example_datetime = datetime.utcnow()
+        valid_datetime_formats = 'Допустимые форматы даты-времени:'
+        for datetime_format in datetime_formats:
+            valid_datetime_formats += f" {datetime_format}: {example_datetime.strftime(datetime_format)};"
+
+        old = request.POST._mutable
+        request.POST._mutable = True
+        request.POST['budget'] = str(a.budget.pk)
+        request.POST['account'] = str(a.pk)
+        request.POST['user_create'] = str(request.user.pk)
+        request.POST['user_update'] = str(request.user.pk)
+        is_time_transaction_error = True
+        for datetime_format in datetime_formats:
+            try:
+                time_transaction_from_post = datetime.strptime(request.POST['form_time_transaction'], datetime_format)
+                if time_transaction_from_post.hour != 0 or time_transaction_from_post.minute != 0 or \
+                        time_transaction_from_post.second != 0 or time_transaction_from_post.microsecond != 0:
+                    request.POST['time_transaction'] = \
+                        (time_transaction_from_post - timedelta(hours=float(request.POST['time_zone']))
+                         ).strftime(formats.get_format("DATETIME_INPUT_FORMATS", lang=translation.get_language())[0])
+                else:
+                    request.POST['time_transaction'] = request.POST['form_time_transaction']
+                is_time_transaction_error = False
+                break
+            except Exception as e:
+                pass
+        if is_time_transaction_error:
+            request.POST['time_transaction'] = request.POST['form_time_transaction']
+
+        if request.POST['type'] in ['DEB', 'MO-']:
+            request.POST['amount'] = \
+                request.POST['amount'][1:] \
+                if request.POST['amount'][0] == '-' \
+                else '-' + request.POST['amount']
+            request.POST['amount_acc_cur'] = \
+                request.POST['amount_acc_cur'][1:] \
+                if request.POST['amount_acc_cur'][0] == '-' \
+                else '-' + request.POST['amount_acc_cur']
+        if request.POST['currency'] == str(a.currency.pk):
+            request.POST['amount'] = request.POST['amount_acc_cur']
+        request.POST._mutable = old
+        form = TransactionAddForm(budget_id=a.budget.pk, data=request.POST)
+        category_form = None
+        if is_time_transaction_error:
+            form.add_error('form_time_transaction', 'datetime_error')
+        if form.is_valid():
+            if request.POST['type'] in ['MO+', 'MO-']:
+                try:
+                    with transaction.atomic():
+                        form.save()
+                        return redirect(return_url)
+                except Exception as e:
+                    form.add_error(None, 'Что-то пошло не так с добавлением операции - ' + str(e))
+            else:
+                try:
+                    with transaction.atomic():
+                        new_transaction = form.save()
+
+                        old = request.POST._mutable
+                        request.POST._mutable = True
+                        request.POST['transaction'] = str(new_transaction.pk)
+
+                        if request.POST['type'] == 'CRE':
+                            request.POST['category'] = Category.get_category_with_object(a.budget,
+                                                                                         request.POST['category_inc'],
+                                                                                         request.POST['budget_object'],
+                                                                                         request.user)
+                            request.POST['category_exp'] = ''
+                        elif request.POST['type'] == 'DEB':
+                            request.POST['category'] = Category.get_category_with_object(a.budget,
+                                                                                         request.POST['category_exp'],
+                                                                                         request.POST['budget_object'],
+                                                                                         request.user)
+                            request.POST['category_inc'] = ''
+                        else:
+                            request.POST['category'] = ''
+                        request.POST._mutable = old
+
+                        category_form = TransactionCategoryAddForm(budget_id=a.budget.pk, data=request.POST)
+
+                        if request.POST['category'] == '' and \
+                                (request.POST['type'] == 'CRE' or request.POST['type'] == 'DEB'):
+                            raise ValidationError('Выберите категорию!')
+
+                        if category_form.is_valid():
+                            category_form.save()
+                            return redirect(return_url)
+                        else:
+                            raise IntegrityError
+
+                except IntegrityError:
+                    pass
+                except ValidationError:
+                    if request.POST['type'] == 'CRE':
+                        category_form.add_error('category_inc', 'Выберите категорию!')
+                    elif request.POST['type'] == 'DEB':
+                        category_form.add_error('category_exp', 'Выберите категорию!')
+                except Exception as e:
+                    form.add_error(None, 'Что-то пошло не так с добавлением операции - ' + str(e))
+
+                old = request.POST._mutable
+                request.POST._mutable = True
+                if request.POST['type'] in ['DEB', 'MO-']:
+                    request.POST['amount'] = \
+                        request.POST['amount'][1:] \
+                        if request.POST['amount'][0] == '-' \
+                        else '-' + request.POST['amount']
+                    request.POST['amount_acc_cur'] = \
+                        request.POST['amount_acc_cur'][1:] \
+                        if request.POST['amount_acc_cur'][0] == '-' \
+                        else '-' + request.POST['amount_acc_cur']
+                if request.POST['currency'] == str(a.currency.pk):
+                    request.POST['amount'] = request.POST['amount_acc_cur']
+                request.POST._mutable = old
+                form = TransactionAddForm(budget_id=a.budget.pk, data=request.POST)
+                if not category_form:
+                    category_form = TransactionCategoryAddForm(budget_id=a.budget.pk, data=request.POST)
+        else:
+            old = request.POST._mutable
+            request.POST._mutable = True
+            if request.POST['type'] in ['DEB', 'MO-']:
+                request.POST['amount'] = \
+                    request.POST['amount'][1:] \
+                    if request.POST['amount'][0] == '-' \
+                    else '-' + request.POST['amount']
+                request.POST['amount_acc_cur'] = \
+                    request.POST['amount_acc_cur'][1:] \
+                    if request.POST['amount_acc_cur'][0] == '-' \
+                    else '-' + request.POST['amount_acc_cur']
+            if request.POST['currency'] == str(a.currency.pk):
+                request.POST['amount'] = request.POST['amount_acc_cur']
+            request.POST._mutable = old
+            form = TransactionAddForm(budget_id=a.budget.pk, data=request.POST)
+            category_form = TransactionCategoryAddForm(budget_id=a.budget.pk, data=request.POST)
+            if is_time_transaction_error:
+                form.add_error('form_time_transaction', valid_datetime_formats)
+    else:
+        form = TransactionAddForm(budget_id=a.budget.pk,
+                                  initial={'type': 'DEB',
+                                           'form_time_transaction':
+                                               datetime.utcnow() + timedelta(hours=float(a.time_zone)),
+                                           'time_zone': a.time_zone,
+                                           'currency': a.currency,
+                                           'budget_year': datetime.utcnow().year,
+                                           'budget_month': datetime.utcnow().month,
+                                           },
+                                  )
+        category_form = TransactionCategoryAddForm(budget_id=a.budget.pk)
+
+    return render(request, 'main/transaction_add.html',
+                  get_u_context(request,
+                                {'title': 'Добавление операции',
+                                 'form': form,
+                                 'category_form': category_form,
+                                 'account_selected': a.id,
+                                 'account_currency': a.currency.iso_code,
+                                 'account_currency_id': a.currency.pk,
+                                 'is_account_not_cash': a.type not in ALL_CASH_ACCOUNT,
+                                 'work_menu': True,
+                                 'selected_menu': 'account_transactions',
+                                 'return_url': return_url}))
+
+
+@login_required
+def edit_transaction(request, transaction_id, return_url):
+    """
+    Функция изменения операции
+    """
+    if not request.user.is_authenticated:
         return redirect('home')
-    return render(request, 'main/account_transactions.html',
-                  get_u_context(request, {'title': 'Операции по счету/кошельку - ' + str(a),
-                                          'account_selected': a.id,
-                                          'account_currency_id': a.currency.id,
-                                          'account_currency_iso': a.currency.iso_code,
-                                          'account_available_balance': a.balance + a.credit_limit,
-                                          'account_balance': a.balance,
-                                          'account_credit_limit': a.credit_limit,
-                                          'account_type': a.type,
-                                          'account_budget': a.budget.id,
-                                          'work_menu': True,
-                                          'selected_menu': 'account_transactions'}))
+    if not (hasattr(request.user, 'profile') and request.user.profile.budget):
+        return redirect('home')
+
+    t = get_object_or_404(Transaction, pk=transaction_id)
+
+    if t.budget != request.user.profile.budget:
+        return HttpResponseForbidden("<h1>Доступ запрещен</h1>")
+
+    if return_url[0:1] != '/':
+        return_url = '/' + return_url
+
+    transaction_name = str(t)
+
+    rec = None
+    if t.type == 'MO-':
+        try:
+            rec = t.receiver
+        except Exception as e:
+            rec = None
+
+    is_linked_movement = t.type == 'MO+' and t.sender or t.type == 'MO-' and rec
+
+    if request.method == 'POST':
+        is_time_transaction_error = False
+
+        old = request.POST._mutable
+        request.POST._mutable = True
+        request.POST['user_update'] = request.user
+
+        valid_datetime_formats = 'Допустимые форматы даты-времени:'
+        if request.POST.get('form_time_transaction'):
+            datetime_formats = formats.get_format("DATETIME_INPUT_FORMATS", lang=translation.get_language())
+            datetime_formats.append(datetime_formats[0][:8])
+            example_datetime = datetime.utcnow()
+            for datetime_format in datetime_formats:
+                valid_datetime_formats += f" {datetime_format}: {example_datetime.strftime(datetime_format)};"
+
+            is_time_transaction_error = True
+            for datetime_format in datetime_formats:
+                try:
+                    time_transaction_from_post = datetime.strptime(request.POST['form_time_transaction'],
+                                                                   datetime_format)
+                    if time_transaction_from_post.hour != 0 or time_transaction_from_post.minute != 0 or \
+                            time_transaction_from_post.second != 0 or time_transaction_from_post.microsecond != 0:
+                        request.POST['time_transaction'] = \
+                            (time_transaction_from_post - timedelta(hours=float(request.POST['time_zone']))
+                             ).strftime(
+                                formats.get_format("DATETIME_INPUT_FORMATS", lang=translation.get_language())[0])
+                    else:
+                        request.POST['time_transaction'] = request.POST['form_time_transaction']
+                    is_time_transaction_error = False
+                    break
+                except Exception as e:
+                    pass
+            if is_time_transaction_error:
+                request.POST['time_transaction'] = request.POST['form_time_transaction']
+
+        if not is_linked_movement:
+            if t.type in ['DEB', 'MO-']:
+                request.POST['amount'] = \
+                    request.POST['amount'][1:] \
+                    if request.POST['amount'][0] == '-' \
+                    else '-' + request.POST['amount']
+                request.POST['amount_acc_cur'] = \
+                    request.POST['amount_acc_cur'][1:] \
+                    if request.POST['amount_acc_cur'][0] == '-' \
+                    else '-' + request.POST['amount_acc_cur']
+            if request.POST['currency'] == str(t.account.currency.id):
+                request.POST['amount'] = request.POST['amount_acc_cur']
+        else:
+            if t.type in ['DEB', 'MO-']:
+                t.amount_acc_cur = -t.amount_acc_cur
+                t.amount = -t.amount
+        request.POST._mutable = old
+
+        form = TransactionEditForm(budget_id=t.budget.pk, is_linked_movement=is_linked_movement, instance=t,
+                                   data=request.POST)
+        if is_time_transaction_error:
+            form.add_error('form_time_transaction', 'datetime_error')
+
+        if form.is_valid():
+            try:
+                with transaction.atomic():
+                    form.save()
+                    return redirect(return_url)
+
+            except Exception as e:
+                form.add_error(None, 'Что-то пошло не так с изменением операции - ' + str(e))
+
+        old = request.POST._mutable
+        request.POST._mutable = True
+        if not is_linked_movement:
+            if t.type in ['DEB', 'MO-']:
+                request.POST['amount'] = \
+                    request.POST['amount'][1:] \
+                    if request.POST['amount'][0] == '-' \
+                    else '-' + request.POST['amount']
+                request.POST['amount_acc_cur'] = \
+                    request.POST['amount_acc_cur'][1:] \
+                    if request.POST['amount_acc_cur'][0] == '-' \
+                    else '-' + request.POST['amount_acc_cur']
+                if request.POST['currency'] == str(t.account.currency.id):
+                    request.POST['amount'] = request.POST['amount_acc_cur']
+        request.POST._mutable = old
+
+        form = TransactionEditForm(budget_id=t.budget.pk, is_linked_movement=is_linked_movement, instance=t,
+                                   data=request.POST)
+        if is_time_transaction_error:
+            form.add_error('form_time_transaction', valid_datetime_formats)
+
+    else:
+
+        form = TransactionEditForm(budget_id=t.budget.pk, is_linked_movement=is_linked_movement, instance=t,
+                                   initial={'form_time_transaction':
+                                            t.time_transaction + timedelta(hours=float(t.time_zone)),
+                                            },
+                                   )
+
+    return render(request, 'main/transaction_edit.html',
+                  get_u_context(request,
+                                {'title': 'Изменение операции',
+                                 'form': form,
+                                 'account_selected': t.account.id,
+                                 'different_currency': t.account.currency.id != t.currency.id,
+                                 'non_move_transaction': t.type in ['CRE', 'DEB'],
+                                 'account_currency': t.account.currency.iso_code,
+                                 'account_currency_id': t.account.currency.pk,
+                                 'is_account_not_cash': t.account.type not in ALL_CASH_ACCOUNT,
+                                 'transaction_name': transaction_name,
+                                 'work_menu': True,
+                                 'selected_menu': 'account_transactions',
+                                 'return_url': return_url}))
 
 
+class DeleteTransaction(LoginRequiredMixin, DataMixin, DeleteView):
+    """
+    Функция удаления операции
+    """
+    model = Transaction
+    template_name = 'main/transaction_delete.html'
+    pk_url_kwarg = 'transaction_id'
+    login_url = reverse_lazy('login')
 
+    def get_context_data(self, *, object_list=None, **kwargs):
+        context = super().get_context_data(**kwargs)
+        t = get_object_or_404(Transaction, pk=self.kwargs['transaction_id'])
+        return_url = self.kwargs['return_url']
+        if return_url[0:1] != '/':
+            return_url = '/' + return_url
+        c_def = self.get_user_context(title='Удаление операции',
+                                      account_selected=t.account.id,
+                                      transaction_name=str(t),
+                                      work_menu=True,
+                                      selected_menu='account_transactions',
+                                      return_url=return_url)
+        return dict(list(context.items()) + list(c_def.items()))
+
+    def get_success_url(self):
+        return_url = self.kwargs['return_url']
+        if return_url[0:1] != '/':
+            return_url = '/' + return_url
+        return return_url
+
+    def dispatch(self, request, *args, **kwargs):
+        t = get_object_or_404(Transaction, pk=self.kwargs['transaction_id'])
+        if request.user.is_authenticated:
+            if not (hasattr(request.user, 'profile') and request.user.profile.budget):
+                return redirect('home')
+            if t.budget != request.user.profile.budget:
+                return self.handle_no_permission()
+        return super(DeleteTransaction, self).dispatch(request, *args, **kwargs)
+
+
+@login_required
+def manage_transaction_category(request, transaction_id, return_url):
+    """
+    Функция изменения списка категорий операции
+    """
+    if not request.user.is_authenticated:
+        return redirect('home')
+    if not (hasattr(request.user, 'profile') and request.user.profile.budget):
+        return redirect('home')
+
+    if return_url[0:1] != '/':
+        return_url = '/' + return_url
+
+    t = get_object_or_404(Transaction, pk=transaction_id)
+
+    if t.type in ['DEB', 'MO-']:
+        transaction_amount = -t.amount_acc_cur
+    else:
+        transaction_amount = t.amount_acc_cur
+
+    if t.budget != request.user.profile.budget:
+        return HttpResponseForbidden("<h1>Доступ запрещен</h1>")
+
+    if request.method == 'POST':
+
+        old = request.POST._mutable
+        request.POST._mutable = True
+        for idx in range(15):
+            if t.type in ['DEB', 'MO-']:
+                s_idx = 'transaction_categories-' + str(idx) + '-amount_acc_cur'
+                if request.POST[s_idx] != '0.0':
+                    request.POST[s_idx] = \
+                        request.POST[s_idx][1:] \
+                        if request.POST[s_idx][0] == '-' \
+                        else '-' + request.POST[s_idx]
+            category_idx = 'transaction_categories-' + str(idx) + '-category'
+            category_form_idx = 'transaction_categories-' + str(idx) + '-category_form'
+            budget_object_idx = 'transaction_categories-' + str(idx) + '-budget_object'
+            request.POST[category_idx] = \
+                Category.get_category_with_object(t.budget,
+                                                  request.POST[category_form_idx],
+                                                  request.POST[budget_object_idx],
+                                                  request.user)
+        request.POST._mutable = old
+
+        formset = TransactionCategoryFormset(request.POST, instance=t, form_kwargs={'parent': t})
+
+        if formset.is_valid():
+            try:
+                with transaction.atomic():
+                    formset.save()
+
+                    # 1. Получим набор категорий по операции
+                    transaction_categories = TransactionCategory.objects.filter(transaction_id=t.pk)
+
+                    # 2 Кейс с отсутствием категории не обрабатываем, ибо такое возможно при создании - здесь
+                    #   категория создастся следом
+                    pass
+
+                    # 3. Если у операции только одна категория, то поменяем суммы в базовых валютах у категории
+                    if len(transaction_categories) == 1:
+                        transaction_category = transaction_categories[0]
+                        is_transaction_category_update = False
+                        if transaction_category.amount_base_cur_1 != ftod(t.amount_base_cur_1, 2):
+                            transaction_category.amount_base_cur_1 = ftod(t.amount_base_cur_1, 2)
+                            is_transaction_category_update = True
+                        if transaction_category.amount_base_cur_2 != ftod(t.amount_base_cur_2, 2):
+                            transaction_category.amount_base_cur_2 = ftod(t.amount_base_cur_2, 2)
+                            is_transaction_category_update = True
+                        if is_transaction_category_update:
+                            transaction_category.save()
+
+                    # 4. Если у операции несколько категорий, то творим магию - обновляем суммы в базовых валютах у
+                    #    категорий в соответствие долям распределения основных сумм категорий операции
+                    if len(transaction_categories) > 1:
+                        # 4.1. Посчитаем текущую сумму основных сумм категорий операции
+                        categories_sum = ftod(0.00, 2)
+                        for transaction_category in transaction_categories:
+                            categories_sum = categories_sum + ftod(transaction_category.amount_acc_cur, 2)
+
+                        # 4.2. Обновим суммы каждой категории
+                        new_sum_amount_base_cur_1 = ftod(0.00, 2)
+                        new_sum_amount_base_cur_2 = ftod(0.00, 2)
+
+                        for i, transaction_category in enumerate(transaction_categories):
+                            is_transaction_category_update = False
+
+                            if i < len(transaction_categories) - 1:
+                                # Для всех, кроме последней
+                                proportion = transaction_category.amount_acc_cur / categories_sum
+                                if transaction_category.amount_base_cur_1 != ftod(t.amount_base_cur_1 * proportion, 2):
+                                    transaction_category.amount_base_cur_1 = ftod(t.amount_base_cur_1 * proportion, 2)
+                                    is_transaction_category_update = True
+                                new_sum_amount_base_cur_1 = \
+                                    new_sum_amount_base_cur_1 + \
+                                    transaction_category.amount_base_cur_1
+                                if transaction_category.amount_base_cur_2 != ftod(t.amount_base_cur_2 * proportion, 2):
+                                    transaction_category.amount_base_cur_2 = ftod(t.amount_base_cur_2 * proportion, 2)
+                                    is_transaction_category_update = True
+                                new_sum_amount_base_cur_2 = \
+                                    new_sum_amount_base_cur_2 + \
+                                    transaction_category.amount_base_cur_2
+                            else:
+                                # для последней берем точный остаток от суммы операции за минусом суммы предыдущих
+                                # категорий, чтобы избежать копеек разницы из-за округления
+                                if transaction_category.amount_base_cur_1 != ftod(t.amount_base_cur_1 -
+                                                                                  new_sum_amount_base_cur_1, 2):
+                                    transaction_category.amount_base_cur_1 = ftod(t.amount_base_cur_1 -
+                                                                                  new_sum_amount_base_cur_1, 2)
+                                    is_transaction_category_update = True
+                                if transaction_category.amount_base_cur_2 != ftod(t.amount_base_cur_2 -
+                                                                                  new_sum_amount_base_cur_2, 2):
+                                    transaction_category.amount_base_cur_2 = ftod(t.amount_base_cur_2 -
+                                                                                  new_sum_amount_base_cur_2, 2)
+                                    is_transaction_category_update = True
+
+                            if is_transaction_category_update:
+                                transaction_category.save()
+
+                    return redirect(return_url)
+            except Exception as e:
+                print('Что-то с сохранением категорий операции пошло не так: ' + str(e))
+
+        if t.type in ['DEB', 'MO-']:
+            old = request.POST._mutable
+            request.POST._mutable = True
+            for idx in range(15):
+                s_idx = 'transaction_categories-' + str(idx) + '-amount_acc_cur'
+                if request.POST[s_idx] != '0.0':
+                    request.POST[s_idx] = \
+                        request.POST[s_idx][1:] \
+                        if request.POST[s_idx][0] == '-' \
+                        else '-' + request.POST[s_idx]
+            request.POST._mutable = old
+            formset = TransactionCategoryFormset(request.POST, instance=t, form_kwargs={'parent': t})
+
+    else:
+        formset = TransactionCategoryFormset(instance=t, form_kwargs={'parent': t})
+
+    return render(request, 'main/transaction_category_edit.html',
+                  get_u_context(request,
+                                {'title': 'Распределение суммы операции по категориям',
+                                 'parent': t,
+                                 'transaction_category_formset': formset,
+                                 'transaction_id': transaction_id,
+                                 'transaction_type': t.type,
+                                 'account_currency': t.account.currency.iso_code,
+                                 'transaction_name': str(t),
+                                 'transaction_amount': transaction_amount,
+                                 'work_menu': True,
+                                 'account_selected': t.account.id,
+                                 'selected_menu': 'account_transactions',
+                                 'return_url': return_url
+                                 }))
+
+
+@login_required
+def set_join_between_transactions(request, transaction_id, return_url):
+    """
+    Функция установки связи между операциями перемещения
+    """
+    if not request.user.is_authenticated:
+        return redirect('home')
+    if not (hasattr(request.user, 'profile') and request.user.profile.budget):
+        return redirect('home')
+
+    changed_transaction = Transaction.objects.get(pk=transaction_id)
+    if changed_transaction.budget != request.user.profile.budget:
+        return HttpResponseForbidden("<h1>Доступ запрещен</h1>")
+
+    if return_url[0:1] != '/':
+        return_url = '/' + return_url
+    if request.method == 'POST':
+        pass
+    elif changed_transaction.type in ('MO+', 'MO-'):
+        search_type = 'MO-' if changed_transaction.type == 'MO+' else 'MO+'
+        search_start_time = changed_transaction.time_transaction - DEFAULT_TIME_DELTA \
+            if changed_transaction.type == 'MO+' \
+            else changed_transaction.time_transaction
+        search_end_time = changed_transaction.time_transaction \
+            if changed_transaction.type == 'MO+' \
+            else changed_transaction.time_transaction + DEFAULT_TIME_DELTA
+        suitable_transactions = Transaction.objects.filter(budget_id=changed_transaction.budget.id,
+                                                           time_transaction__gte=search_start_time,
+                                                           time_transaction__lte=search_end_time,
+                                                           type=search_type,
+                                                           amount=-changed_transaction.amount,
+                                                           currency_id=changed_transaction.currency.id,
+                                                           sender__isnull=True,
+                                                           receiver__isnull=True
+                                                           ).exclude(account_id=changed_transaction.account.id)
+
+        if len(suitable_transactions) == 1:
+            try:
+                with transaction.atomic():
+                    if changed_transaction.type == 'MO+':
+                        changed_transaction.sender = suitable_transactions[0]
+                        changed_transaction.user_update = request.user
+                        changed_transaction.save()
+                    elif changed_transaction.type == 'MO-':
+                        suitable_transactions[0].sender = changed_transaction
+                        changed_transaction.user_update = request.user
+                        suitable_transactions[0].save()
+            except Exception as e:
+                print('Что-то пошло не так с установлением связи между операциями - ' + str(e))
+            return redirect(return_url)
+        else:
+            if changed_transaction.type == 'MO+':
+                return custom_redirect('account_transactions_for_join', transaction_id, return_url,
+                                       time_transaction_min=search_start_time.strftime(
+                                           formats.get_format("DATETIME_INPUT_FORMATS",
+                                                              lang=translation.get_language())[0]
+                                       ),
+                                       time_transaction_max=search_end_time.strftime(
+                                           formats.get_format("DATETIME_INPUT_FORMATS",
+                                                              lang=translation.get_language())[0]
+                                       ),
+                                       amount_exp_min=changed_transaction.amount,
+                                       amount_exp_max=changed_transaction.amount,
+                                       currency=changed_transaction.currency.iso_code)
+            else:
+                return custom_redirect('account_transactions_for_join', transaction_id, return_url,
+                                       time_transaction_min=search_start_time.strftime(
+                                           formats.get_format("DATETIME_INPUT_FORMATS",
+                                                              lang=translation.get_language())[0]
+                                       ),
+                                       time_transaction_max=search_end_time.strftime(
+                                           formats.get_format("DATETIME_INPUT_FORMATS",
+                                                              lang=translation.get_language())[0]
+                                       ),
+                                       amount_inc_min=-changed_transaction.amount,
+                                       amount_inc_max=-changed_transaction.amount,
+                                       currency=changed_transaction.currency.iso_code)
+    return redirect(return_url)
+
+
+class AccountTransactionsForJoin(LoginRequiredMixin, DataMixin, ListView):
+    """
+    Класс списка операций перемещения для выбора для установки связи между ними
+    """
+    model = Transaction
+    template_name = 'main/account_transactions_for_join.html'
+    context_object_name = 'transactions'
+    allow_empty = True
+    account_transaction_filter = None
+    success_url = reverse_lazy('home')
+
+    def get_context_data(self, *, object_list=None, **kwargs):
+        context = super(AccountTransactionsForJoin, self).get_context_data(**kwargs)
+        t = get_object_or_404(Transaction, pk=self.kwargs['transaction_id'])
+        search_start_time = t.time_transaction - DEFAULT_TIME_DELTA \
+            if t.type == 'MO+' \
+            else t.time_transaction
+        search_end_time = t.time_transaction \
+            if t.type == 'MO+' \
+            else t.time_transaction + DEFAULT_TIME_DELTA
+        return_url = self.kwargs['return_url']
+        if return_url[0:1] != '/':
+            return_url = '/' + return_url
+        c_def = self.get_user_context(title='Выбор перемещения для связи',
+                                      filter=self.account_transaction_filter,
+                                      account_selected=t.account_id,
+                                      transaction_for_join=t,
+                                      transaction_for_join_type=t.type,
+                                      transaction_for_join_time_transaction=t.time_transaction.strftime(
+                                          formats.get_format("DATETIME_INPUT_FORMATS",
+                                                             lang=translation.get_language())[0]
+                                      ),
+                                      transaction_for_join_start_time=search_start_time,
+                                      transaction_for_join_end_time=search_end_time,
+                                      transaction_for_join_amount=t.amount,
+                                      transaction_for_join_currency_iso_code=t.currency.iso_code,
+                                      transaction_for_join_currency_id=t.currency.id,
+                                      return_url=return_url,
+                                      work_menu=True,
+                                      selected_menu='account_transactions')
+        return dict(list(context.items()) + list(c_def.items()))
+
+    def dispatch(self, request, *args, **kwargs):
+        t = get_object_or_404(Transaction, pk=self.kwargs['transaction_id'])
+        return_url = self.kwargs['return_url']
+        if return_url[0:1] != '/':
+            return_url = '/' + return_url
+        self.success_url = return_url
+        if request.user.is_authenticated:
+            if not (hasattr(request.user, 'profile') and request.user.profile.budget):
+                return redirect('home')
+            if t.budget != request.user.profile.budget:
+                return self.handle_no_permission()
+        if t.type not in ['MO-', 'MO+']:
+            return redirect('home')
+
+        search_type = 'MO-' if t.type == 'MO+' else 'MO+'
+        self.account_transaction_filter = \
+            AccountTransactionsFilterForJoin(
+                request.GET, request=request,
+                queryset=(Transaction.objects
+                          .annotate(a_name=Concat(F('account__name'),
+                                                  Value(' ('),
+                                                  F('account__currency__iso_code'),
+                                                  Value(')'),
+                                                  output_field=models.CharField()))
+                          .filter(budget_id=t.budget.id,
+                                  type=search_type,
+                                  sender__isnull=True,
+                                  receiver__isnull=True
+                                  )
+                          .exclude(account_id=t.account.id)
+                          .order_by('-time_transaction')
+                          .select_related('budget', 'account', 'currency', 'sender')
+                          )
+            )
+        self.queryset = self.account_transaction_filter.qs
+        return super(AccountTransactionsForJoin, self).dispatch(request, *args, **kwargs)
+
+
+@login_required
+def join_confirmation_between_transactions(request, sender_id, receiver_id, return_url):
+    """
+    Функция подтверждения выбора операций перемещения для установки связи между ними
+    """
+
+    if not request.user.is_authenticated:
+        return redirect('home')
+    if not (hasattr(request.user, 'profile') and request.user.profile.budget):
+        return redirect('home')
+
+    sender_transaction = get_object_or_404(Transaction, pk=sender_id)
+    receiver_transaction = get_object_or_404(Transaction, pk=receiver_id)
+    if sender_transaction.budget != request.user.profile.budget:
+        return HttpResponseForbidden("<h1>Доступ запрещен</h1>")
+    if receiver_transaction.budget != request.user.profile.budget:
+        return HttpResponseForbidden("<h1>Доступ запрещен</h1>")
+    if return_url[0:1] != '/':
+        return_url = '/' + return_url
+    if sender_transaction.type != 'MO-':
+        return redirect(return_url)
+    if receiver_transaction.type != 'MO+':
+        return redirect(return_url)
+    if hasattr(sender_transaction, 'receiver') and sender_transaction.receiver is not None:
+        return redirect(return_url)
+    if receiver_transaction.sender is not None:
+        return redirect(return_url)
+
+    if request.method == 'GET':
+        is_time_transaction_valid = \
+            sender_transaction.time_transaction <= receiver_transaction.time_transaction or \
+            receiver_transaction.time_transaction <= sender_transaction.time_transaction + DEFAULT_TIME_DELTA
+        is_amount_valid = receiver_transaction.amount == -sender_transaction.amount_acc_cur
+        is_currency_valid = receiver_transaction.currency == sender_transaction.account.currency
+
+        if is_time_transaction_valid and is_amount_valid and is_currency_valid:
+            try:
+                with transaction.atomic():
+                    receiver_transaction.sender = sender_transaction
+                    receiver_transaction.user_update = request.user
+                    receiver_transaction.save()
+            except Exception as e:
+                print('Что-то пошло не так с установлением связи между операциями - ' + str(e))
+            return redirect(return_url)
+
+        if is_time_transaction_valid:
+            difference_in_time = ''
+            old_time = receiver_transaction.time_transaction
+            new_time = receiver_transaction.time_transaction
+        else:
+            difference_in_time = sender_transaction.time_transaction - receiver_transaction.time_transaction
+            old_time = receiver_transaction.time_transaction
+            new_time = sender_transaction.time_transaction
+            if difference_in_time.days == 0:
+                difference_in_time = str(difference_in_time)
+            elif abs(difference_in_time.days) % 10 == 1:
+                difference_in_time = str(difference_in_time).replace('days', 'день').replace('day', 'день')
+            elif 0 < abs(difference_in_time.days) % 10 <= 4:
+                difference_in_time = str(difference_in_time).replace('days', 'дня')
+            else:
+                difference_in_time = str(difference_in_time).replace('days', 'дней')
+            difference_in_time = 'Разница во времени составила: ' + difference_in_time
+
+        transaction_currency = sender_transaction.currency
+        account_currency = receiver_transaction.account.currency
+        if is_currency_valid:
+            old_currency = receiver_transaction.currency
+            new_currency = receiver_transaction.currency
+            difference_in_currency = ''
+            if is_amount_valid:
+                old_amount = receiver_transaction.amount
+                new_amount = receiver_transaction.amount
+                difference_in_amount = ''
+                old_amount_acc_cur = receiver_transaction.amount_acc_cur
+                new_amount_acc_cur = receiver_transaction.amount_acc_cur
+                difference_in_amount_acc_cur = ''
+            else:
+                old_amount = receiver_transaction.amount
+                new_amount = -sender_transaction.amount_acc_cur
+                difference_in_amount = 'Разница в сумме операции составила: ' + \
+                                       number_format(new_amount - old_amount,
+                                                     decimal_pos=2, use_l10n=True, force_grouping=True) + ' ' + \
+                                       new_currency.iso_code
+                if transaction_currency == account_currency:
+                    old_amount_acc_cur = receiver_transaction.amount_acc_cur
+                    new_amount_acc_cur = -sender_transaction.amount_acc_cur
+                    difference_in_amount_acc_cur = \
+                        'Разница в сумме операции в валюте счета составила: ' + \
+                        number_format(new_amount_acc_cur - old_amount_acc_cur,
+                                      decimal_pos=2, use_l10n=True, force_grouping=True) + ' ' + \
+                        new_currency.iso_code
+                else:
+                    old_amount_acc_cur = receiver_transaction.amount_acc_cur
+                    new_amount_acc_cur = receiver_transaction.amount_acc_cur
+                    if new_amount_acc_cur > new_amount:
+                        difference_in_amount_acc_cur = \
+                            'Изменился курс операции: ' + \
+                            number_format(old_amount_acc_cur / old_amount,
+                                          decimal_pos=5, use_l10n=True, force_grouping=True) + ' ' + \
+                            receiver_transaction.account.currency.iso_code + '/' + \
+                            old_currency.iso_code + ' -> ' + \
+                            number_format(new_amount_acc_cur / new_amount,
+                                          decimal_pos=5, use_l10n=True, force_grouping=True) + ' ' + \
+                            account_currency.iso_code + '/' + transaction_currency.iso_code
+                    else:
+                        difference_in_amount_acc_cur = \
+                            'Изменился курс операции: ' + \
+                            number_format(old_amount / old_amount_acc_cur,
+                                          decimal_pos=5, use_l10n=True, force_grouping=True) + ' ' + \
+                            old_currency.iso_code + '/' + \
+                            receiver_transaction.account.currency.iso_code + ' -> ' + \
+                            number_format(new_amount / new_amount_acc_cur,
+                                          decimal_pos=5, use_l10n=True, force_grouping=True) + ' ' + \
+                            transaction_currency.iso_code + '/' + account_currency.iso_code
+        else:
+            old_currency = receiver_transaction.currency
+            new_currency = sender_transaction.account.currency
+            difference_in_currency = 'Валюта операции изменилась: ' + old_currency.iso_code + \
+                                     ' -> ' + new_currency.iso_code
+            if is_amount_valid:
+                old_amount = receiver_transaction.amount
+                new_amount = receiver_transaction.amount
+                difference_in_amount = ''
+                if transaction_currency == account_currency:
+                    old_amount_acc_cur = receiver_transaction.amount_acc_cur
+                    new_amount_acc_cur = -sender_transaction.amount
+                    difference_in_amount_acc_cur = \
+                        'Разница в сумме операции в валюте счета составила: ' + \
+                        number_format(new_amount_acc_cur - old_amount_acc_cur,
+                                      decimal_pos=2, use_l10n=True, force_grouping=True) + ' ' + \
+                        new_currency.iso_code
+                else:
+                    old_amount_acc_cur = receiver_transaction.amount_acc_cur
+                    new_amount_acc_cur = receiver_transaction.amount_acc_cur
+                    if new_amount_acc_cur > new_amount:
+                        difference_in_amount_acc_cur = \
+                            'Изменился курс операции: ' + \
+                            number_format(old_amount_acc_cur / old_amount,
+                                          decimal_pos=5, use_l10n=True, force_grouping=True) + ' ' + \
+                            receiver_transaction.account.currency.iso_code + '/' + \
+                            old_currency.iso_code + ' -> ' + \
+                            number_format(new_amount_acc_cur / new_amount,
+                                          decimal_pos=5, use_l10n=True, force_grouping=True) + ' ' + \
+                            account_currency.iso_code + '/' + transaction_currency.iso_code
+                    else:
+                        difference_in_amount_acc_cur = \
+                            'Изменился курс операции: ' + \
+                            number_format(old_amount / old_amount_acc_cur,
+                                          decimal_pos=5, use_l10n=True, force_grouping=True) + ' ' + \
+                            old_currency.iso_code + '/' + \
+                            receiver_transaction.account.currency.iso_code + ' -> ' + \
+                            number_format(new_amount / new_amount_acc_cur,
+                                          decimal_pos=5, use_l10n=True, force_grouping=True) + ' ' + \
+                            transaction_currency.iso_code + '/' + account_currency.iso_code
+            else:
+                old_amount = receiver_transaction.amount
+                new_amount = -sender_transaction.amount_acc_cur
+                difference_in_amount = 'Сумма операции изменилась: ' + \
+                                       number_format(old_amount,
+                                                     decimal_pos=2, use_l10n=True, force_grouping=True) + ' ' + \
+                                       old_currency.iso_code + ' -> ' + \
+                                       number_format(new_amount,
+                                                     decimal_pos=2, use_l10n=True, force_grouping=True) + ' ' + \
+                                       new_currency.iso_code
+                if transaction_currency == account_currency:
+                    old_amount_acc_cur = receiver_transaction.amount_acc_cur
+                    new_amount_acc_cur = -sender_transaction.amount_acc_cur
+                    difference_in_amount_acc_cur = \
+                        'Разница в сумме операции в валюте счета составила: ' + \
+                        number_format(new_amount_acc_cur - old_amount_acc_cur,
+                                      decimal_pos=2, use_l10n=True, force_grouping=True) + ' ' + \
+                        new_currency.iso_code
+                else:
+                    old_amount_acc_cur = receiver_transaction.amount_acc_cur
+                    new_amount_acc_cur = receiver_transaction.amount_acc_cur
+                    if new_amount_acc_cur > new_amount:
+                        difference_in_amount_acc_cur = \
+                            'Изменился курс операции: ' + \
+                            number_format(old_amount_acc_cur / old_amount,
+                                          decimal_pos=5, use_l10n=True, force_grouping=True) + ' ' + \
+                            receiver_transaction.account.currency.iso_code + '/' + \
+                            old_currency.iso_code + ' -> ' + \
+                            number_format(new_amount_acc_cur / new_amount,
+                                          decimal_pos=5, use_l10n=True, force_grouping=True) + ' ' + \
+                            account_currency.iso_code + '/' + transaction_currency.iso_code
+                    else:
+                        difference_in_amount_acc_cur = \
+                            'Изменился курс операции: ' + \
+                            number_format(old_amount / old_amount_acc_cur,
+                                          decimal_pos=5, use_l10n=True, force_grouping=True) + ' ' + \
+                            old_currency.iso_code + '/' + \
+                            receiver_transaction.account.currency.iso_code + ' -> ' + \
+                            number_format(new_amount / new_amount_acc_cur,
+                                          decimal_pos=5, use_l10n=True, force_grouping=True) + ' ' + \
+                            transaction_currency.iso_code + '/' + account_currency.iso_code
+
+        form = JoinConfirmationForm(initial={'old_time': old_time,
+                                             'new_time': new_time,
+                                             'old_currency': old_currency.iso_code,
+                                             'new_currency': new_currency.iso_code,
+                                             'new_currency_id': new_currency.id,
+                                             'old_amount': old_amount,
+                                             'new_amount': new_amount,
+                                             'old_amount_acc_cur': old_amount_acc_cur,
+                                             'new_amount_acc_cur': new_amount_acc_cur,
+                                             },
+                                    )
+
+        return render(request, 'main/account_transactions_join_confirmation.html',
+                      get_u_context(request,
+                                    {'title': 'Подтверждение создания связи между перемещениями',
+                                     'form': form,
+                                     'sender_transaction': sender_transaction,
+                                     'receiver_transaction': receiver_transaction,
+                                     'difference_in_time': difference_in_time,
+                                     'difference_in_currency': difference_in_currency,
+                                     'difference_in_amount': difference_in_amount,
+                                     'difference_in_amount_acc_cur': difference_in_amount_acc_cur,
+                                     'work_menu': True,
+                                     'selected_menu': 'account_transactions',
+                                     'account_selected': sender_transaction.account.id,
+                                     'return_url': return_url}))
+
+    elif request.method == 'POST':
+        try:
+            with transaction.atomic():
+                if receiver_transaction.time_transaction < \
+                        sender_transaction.time_transaction or \
+                        sender_transaction.time_transaction + DEFAULT_TIME_DELTA < \
+                        receiver_transaction.time_transaction:
+                    receiver_transaction.time_transaction = sender_transaction.time_transaction
+                receiver_transaction.currency = sender_transaction.account.currency
+                receiver_transaction.amount = -sender_transaction.amount_acc_cur
+                if receiver_transaction.currency == receiver_transaction.account.currency:
+                    receiver_transaction.amount_acc_cur = receiver_transaction.amount
+                receiver_transaction.sender = sender_transaction
+                receiver_transaction.user_update = request.user
+                receiver_transaction.save()
+        except Exception as e:
+            print('Что-то пошло не так с установлением связи между операциями - ' + str(e))
+        return redirect(return_url)
+
+    return redirect(return_url)
+
+
+@login_required
+def delete_join_between_transactions(request, transaction_id, return_url):
+    if not request.user.is_authenticated:
+        return redirect('home')
+    if not request.user.profile.budget:
+        return redirect('home')
+    changed_transaction = Transaction.objects.get(pk=transaction_id)
+    if changed_transaction.budget != request.user.profile.budget:
+        return HttpResponseForbidden("<h1>Доступ запрещен</h1>")
+
+    if return_url[0:1] != '/':
+        return_url = '/' + return_url
+    try:
+        with transaction.atomic():
+            if changed_transaction.type == 'MO+':
+                changed_transaction.sender = None
+                changed_transaction.user_update = request.user
+                changed_transaction.save()
+            elif changed_transaction.type == 'MO-':
+                changed_transaction = changed_transaction.receiver
+                changed_transaction.user_update = request.user
+                changed_transaction.sender = None
+                changed_transaction.save()
+    except Exception as e:
+        print('Что-то пошло не так с удалением связи между операциями - ' + str(e))
+    return redirect(return_url)

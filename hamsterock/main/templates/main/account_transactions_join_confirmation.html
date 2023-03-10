@@ -1,0 +1,47 @@
+{% extends 'main/base.html' %}
+
+{% block content %}
+<h1>{{title}}</h1>
+<form method="post">
+    {% csrf_token %}
+    <p><label class="form-label" style="min-width: 215px" for="id_sender_transaction">Перемещение расход: </label><input id="id_sender_transaction" type="text" name="sender_transaction" value="{{ sender_transaction }}" class="form-input-small" style="width: 1020px; text-align: left;" readonly></p>
+    <p><label class="form-label" style="min-width: 215px" for="id_receiver_transaction">Перемещение приход: </label><input id="id_receiver_transaction" type="text" name="receiver_transaction" value="{{ receiver_transaction }}" class="form-input-small" style="width: 1020px; text-align: left;" readonly></p>
+    <p><strong>ВАЖНО! При установке связи операция перемещения приход будет изменена:</strong></p>
+    <div class="form-error">{{ form.non_field_errors }}</div>
+    <table class="table-form-confirmation-join">
+        <tr>
+            <th>ПАРАМЕТР</th>
+            <th>БЫЛО</th>
+            <th>СТАЛО</th>
+            <th>ОПИСАНИЕ ИЗМЕНЕНИЯ</th>
+        </tr>
+        <tr>
+            <td>Дата-время перемещения</td>
+            <td><span class="cell-form">{{ form.old_time }}</span></td>
+            <td><span class="cell-form">{{ form.new_time }}</span></td>
+            <td>{{ difference_in_time }}</td>
+        </tr>
+        <tr>
+            <td>Сумма в валюте счета</td>
+            <td><span class="cell-form">{{ form.old_amount_acc_cur }}</span></td>
+            <td><span class="cell-form">{{ form.new_amount_acc_cur }}</span></td>
+            <td>{{ difference_in_amount_acc_cur }}</td>
+        </tr>
+        <tr>
+            <td>Валюта перемещения</td>
+            <td><span class="cell-form">{{ form.old_currency }}</span></td>
+            <td><span class="cell-form">{{ form.new_currency }}</span>{{ form.new_currency_id }}</td>
+            <td>{{ difference_in_currency }}</td>
+        </tr>
+        <tr>
+            <td>Сумма перемещения</td>
+            <td><span class="cell-form">{{ form.old_amount }}</span></td>
+            <td><span class="cell-form">{{ form.new_amount }}</span></td>
+            <td>{{ difference_in_amount }}</td>
+        </tr>
+    </table>
+    <p> </p>
+    <button type="submit">Подтвердить изменения и создать связь</button> <a href="{{ return_url }}"><input type="button" value="Отмена"></a>
+</form>
+
+{% endblock %}

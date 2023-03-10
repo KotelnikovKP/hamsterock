@@ -1,0 +1,55 @@
+{% extends 'main/base.html' %}
+{% load main_tags %}
+{% load static %}
+
+{% block content %}
+<h1>{{title}}</h1>
+<p>
+    <label class="form-label" style="min-width: 100px" for="id_transaction_for_join">Перемещение: </label>
+    <input id="id_transaction_for_join" type="text" name="transaction_for_join" value="{{ transaction_for_join }}" class="form-input-small" style="width: 1000px; text-align: left;" readonly>&ensp;
+</p>
+<p><strong>ОПЕРАЦИИ ПЕРЕМЕЩЕНИЯ {% if transaction_for_join_type == 'MO+' %}РАСХОД{% else %}ПРИХОД{% endif %}:</strong></p>
+<table class="table-transaction-for-join">
+    <tr>
+        <th></th>
+        <th>ДАТА-ВРЕМЯ UTC<br><br><span style="color: #0059b2">{{ transaction_for_join_time_transaction }}</span></th>
+        <th>СЧЕТ-КОШЕЛЕК<br><br><br> </th>
+        <th>СУММА ОПЕРАЦИИ В ВАЛЮТЕ СЧЕТА</th>
+        <th>ВАЛЮТА ОПЕРАЦИИ<br><span style="color: #0059b2">{{ transaction_for_join_currency_iso_code }}</span></th>
+        <th>СУММА ОПЕРАЦИИ<br><span style="color: #0059b2">{% if transaction_for_join_type == 'MO+' %}{{ transaction_for_join_amount|floatformat:"2g" }}{% else %}{{ transaction_for_join_amount|negative|floatformat:"2g" }}{% endif %}</span></th>
+        <th>ПЕРИОД<br><br><br> </th>
+        <th>ЛОКАЦИЯ И ОПИСАНИЕ ОПЕРАЦИИ<br><br><br> </th>
+        <th>ИНФОРМАЦИЯ ОТ БАНКА<br><br><br> </th>
+        <th></th>
+    </tr>
+    <form method="get"><tr>
+        <td></td>
+        <td><span class="{% if filter.form.time_transaction.errors %}cell-form-error{% else %}cell-form{% endif %}">{{ filter.form.time_transaction }}</span></td>
+        <td><span class="{% if filter.form.account.errors %}cell-form-error{% else %}cell-form{% endif %}">{{ filter.form.account }}</span></td>
+        <td>{% if transaction_for_join_type == 'MO+' %}<span class="{% if filter.form.amount_acc_cur_exp.errors %}cell-form-error{% else %}cell-form{% endif %}">{{ filter.form.amount_acc_cur_exp }}</span>{% else %}<span class="{% if filter.form.amount_acc_cur_inc.errors %}cell-form-error{% else %}cell-form{% endif %}">{{ filter.form.amount_acc_cur_inc }}</span>{% endif %}</td>
+        <td><span class="{% if filter.form.currency.errors %}cell-form-error{% else %}cell-form{% endif %}">{{ filter.form.currency }}</span></td>
+        <td>{% if transaction_for_join_type == 'MO+' %}<span class="{% if filter.form.amount_exp.errors %}cell-form-error{% else %}cell-form{% endif %}">{{ filter.form.amount_exp }}</span>{% else %}<span class="{% if filter.form.amount_inc.errors %}cell-form-error{% else %}cell-form{% endif %}">{{ filter.form.amount_inc }}</span>{% endif %}</td>
+        <td><span class="{% if filter.form.budget_period.errors %}cell-form-error{% else %}cell-form{% endif %}">{{ filter.form.budget_period }}</span></td>
+        <td><span class="{% if filter.form.description.errors %}cell-form-error{% else %}cell-form{% endif %}">{{ filter.form.description }}</span></td>
+        <td><span class="{% if filter.form.banks_description.errors %}cell-form-error{% else %}cell-form{% endif %}">{{ filter.form.banks_description }}</span></td>
+        <td><input type="submit" value="Отобрать" /></td>
+    </tr></form>
+    {% for t in transactions %}
+    <tr>
+        <td><a href="{% if transaction_for_join_type == 'MO+' %}{% url 'join_confirmation_between_transactions' t.id transaction_for_join.id return_url %}{% else %}{% url 'join_confirmation_between_transactions' transaction_for_join.id t.id return_url %}{% endif %}"><input type="button" value="Выбрать"></a></td>
+        <td><span style="{% if t.time_transaction < transaction_for_join_start_time or t.time_transaction > transaction_for_join_end_time %}text-decoration: line-through; color: #CC0000; {% endif %}{% if t.time_transaction.year != t.budget_year or t.time_transaction.month != t.budget_month %}background: #FCE4D6;{% endif %}">{{ t.time_transaction|date:"SHORT_DATETIME_FORMAT" }}</span></td>
+        <td>{{ t.account }}</td>
+        <td>{% if transaction_for_join_type == 'MO+' %}{{ t.amount_acc_cur|negative|floatformat:"2g" }}{% else %}{{ t.amount_acc_cur|floatformat:"2g" }}{% endif %}</td>
+        <td><span style="{% if t.currency.id != transaction_for_join_currency_id %}text-decoration: line-through; color: #CC0000; {% endif %}">{{ t.currency.iso_code }}</span></td>
+        <td><span style="{% if t.amount != transaction_for_join_amount|negative %}text-decoration: line-through; color: #CC0000; {% endif %}">{% if transaction_for_join_type == 'MO+' %}{{ t.amount|negative|floatformat:"2g" }}{% else %}{{ t.amount|floatformat:"2g" }}{% endif %}</span></td>
+        <td><span style="{% if t.time_transaction.year != t.budget_year or t.time_transaction.month != t.budget_month %}background: #FCE4D6;{% endif %}">{% getperiod t.budget_year t.budget_month %}</span></td>
+        <td>{% if t.place %}{{ t.place }} {% endif %}{% if t.description %}{{ t.description }}{% endif %}</td>
+        <td>{% if t.mcc_code %}{{ t.mcc_code }} {% endif %}{% if t.banks_category %}{{ t.banks_category }} {% endif %}{% if t.banks_description %}{{ t.banks_description }}{% endif %}</td>
+        <td></td>
+    </tr>
+    {% endfor %}
+    {% if not transactions %}<tr><td></td><td>Не найдено</td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td></tr>{% endif %}
+</table>
+<p> </p>
+<a href="{{ return_url }}"><input type="button" value="Возврат"></a>
+{% endblock %}

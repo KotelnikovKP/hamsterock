@@ -41,8 +41,14 @@ def get_u_context(request, initial_context):
 
             now = datetime.utcnow()
             try:
-                first_budget_year = BudgetRegister.objects.filter(budget_id=request.user.profile.budget.pk).order_by('-budget_year')[:1][0].budget_year
-                last_budget_year = BudgetRegister.objects.filter(budget_id=request.user.profile.budget.pk).order_by('budget_year')[:1][0].budget_year
+                first_budget_year = (BudgetRegister.objects
+                                     .filter(budget_id=request.user.profile.budget.pk)
+                                     .order_by('-budget_year')
+                                     )[:1][0].budget_year
+                last_budget_year = (BudgetRegister.objects
+                                    .filter(budget_id=request.user.profile.budget.pk)
+                                    .order_by('budget_year')
+                                    )[:1][0].budget_year
             except Exception as e:
                 first_budget_year = now.year
                 last_budget_year = now.year
@@ -110,4 +116,3 @@ def get_execution_percentage(planned_val, actual_val):
     except Exception as e:
         pass
     return execution_percentage
-

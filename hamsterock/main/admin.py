@@ -78,5 +78,3 @@ class CategoryAdmin(MPTTModelAdmin):
 
 
 admin.site.register(Category, CategoryAdmin)
-
-

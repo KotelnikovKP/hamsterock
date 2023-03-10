@@ -1,0 +1,67 @@
+{% extends 'main/base.html' %}
+
+{% block scripts %}
+<script>
+function add_category(b) {
+    var tr;
+    for (var i=1; i<=15; i++) {
+        tr = document.getElementById('id_tr_'+String(i));
+        if (tr.style.display == 'none') {
+            tr.style.display = "";
+            if (i == 15) {
+                b.style.display = 'none';
+            }
+            break;
+        }
+    }
+}
+</script>
+{% endblock %}
+
+{% block content %}
+<h1>{{title}}</h1>
+<p><label class="form-label">Операция: </label><strong>{{ transaction_name }}</strong></p>
+<p><label class="form-label">Сумма операции: </label><strong>{{ transaction_amount|floatformat:"2g" }} ({{ account_currency }})</strong></p>
+
+<form action="{% url 'manage_transaction_category' transaction_id return_url %}" method="post">
+    {% csrf_token %}
+
+    {{ transaction_category_formset.management_form }}
+    {{ transaction_category_formset.non_form_errors }}
+    <table class="table-category">
+    <tr>
+        <th>КАТЕГОРИЯ</th>
+        <th>ОБЪЕКТ БЮДЖЕТА</th>
+        <th>СУММА</th>
+    </tr>
+    {% for transaction_category_form in transaction_category_formset.forms %}
+        {% if not forloop.first and forloop.counter > transaction_category_formset.initial_form_count and not transaction_category_form.cleaned_data %}
+    <tr id="id_tr_{{ forloop.counter }}" style="display: none;">
+        {% else %}
+    <tr id="id_tr_{{ forloop.counter }}">
+        {% endif %}
+        {% for f in transaction_category_form %}
+            {% if not f.is_hidden %}
+                {% if f.name == 'category' %}
+        <td style="display: none">
+                {% else %}
+        <td>
+                {% endif %}
+            {% endif %}
+                {{ f }}
+                <div class="table-error">{{ f.errors }}</div>
+            {% if not f.is_hidden %}
+        </td>
+            {% endif %}
+        {% endfor %}
+    </tr>
+    {% endfor %}
+    </table>
+    <input type="button" value="Добавить категорию" onclick="add_category(this)"><br>
+    <hr>
+    <button type="submit">Сохранить изменения</button> <a href="{{ return_url }}"><input type="button" value="Отмена"></a>
+
+</form>
+
+
+{% endblock %}

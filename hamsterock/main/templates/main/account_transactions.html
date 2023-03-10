@@ -17,5 +17,122 @@
     <input type="text" name="available_balance" value="{{ account_available_balance|floatformat:"2g" }}" class="form-input-small" readonly id="id_available_balance">
 {% endif %}
 </p>
+<a href="{% url 'add_transaction' account_selected request.get_full_path %}"><input type="button" value="Добавить операцию"></a>{% comment %} <a href="{% url 'load_transactions' account_selected request.get_full_path %}"><input type="button" value="Загрузить операции из файла"></a> <a href="{% url 'balances_recalculation' account_budget request.get_full_path %}"><input type="button" value="Пересчитать остатки"></a>{% endcomment %}
+<table class="table-transaction">
+    <tr>
+        <th>ДАТА-ВРЕМЯ UTC</th>
+        <th>ПРИХОД</th>
+        <th>РАСХОД</th>
+        <th>ОСТАТОК</th>
+        <th>ПЕРИОД</th>
+        <th>КАТЕГОРИЯ</th>
+        <th>ЛОКАЦИЯ И ОПИСАНИЕ ОПЕРАЦИИ</th>
+        <th>ИНФОРМАЦИЯ ОТ БАНКА</th>
+        <th>ПРОЕКТ</th>
+        <th></th>
+    </tr>
+    <form method="get"><tr>
+        <td><span class="{% if filter.form.time_transaction.errors %}cell-form-error{% else %}cell-form{% endif %}">{{ filter.form.time_transaction }}</span></td>
+        <td><span class="{% if filter.form.amount_inc.errors %}cell-form-error{% else %}cell-form{% endif %}">{{ filter.form.amount_inc }}</span></td>
+        <td><span class="{% if filter.form.amount_exp.errors %}cell-form-error{% else %}cell-form{% endif %}">{{ filter.form.amount_exp }}</span></td>
+        <td></td>
+        <td><span class="{% if filter.form.budget_period.errors %}cell-form-error{% else %}cell-form{% endif %}">{{ filter.form.budget_period }}</span></td>
+        <td><span class="{% if filter.form.category.errors %}cell-form-error{% else %}cell-form{% endif %}">{{ filter.form.category }}</span></td>
+        <td><span class="{% if filter.form.description.errors %}cell-form-error{% else %}cell-form{% endif %}">{{ filter.form.description }}</span></td>
+        <td><span class="{% if filter.form.banks_description.errors %}cell-form-error{% else %}cell-form{% endif %}">{{ filter.form.banks_description }}</span></td>
+        <td><span class="{% if filter.form.project.errors %}cell-form-error{% else %}cell-form{% endif %}">{{ filter.form.project }}</span></td>
+        <td><input type="submit" value="Отобрать" /></td>
+    </tr></form>
+    {% for t in transactions %}
+    <tr>
+        <td><a href="{% url 'edit_transaction' t.pk request.get_full_path %}" alt="Изменить операцию" title="Изменить операцию"{% if t.time_transaction.year != t.budget_year or t.time_transaction.month != t.budget_month %} style="background: #FCE4D6;"{% endif %}>{{ t.time_transaction|date:"SHORT_DATETIME_FORMAT" }}</a></td>
 
+        {% if t.type == 'CRE' or t.type == 'MO+' %}
+            {% if t.currency.id == account_currency_id %}
+        <td>{{ t.amount_acc_cur|floatformat:"2g" }}
+            {% else %}
+        <td>{{ t.amount_acc_cur|floatformat:"2g" }}<br><span style="color: #888">({{ t.currency.iso_code|lower }}: {{ t.amount|floatformat:"2g" }})</span>
+            {% endif %}
+        </td>
+        {% else %}
+        <td></td>
+        {% endif %}
+
+        {% if t.type == 'DEB' or t.type == 'MO-' %}
+            {% if t.currency.id == account_currency_id %}
+        <td>{{ t.amount_acc_cur|negative|floatformat:"2g" }}
+            {% else %}
+        <td>{{ t.amount_acc_cur|negative|floatformat:"2g" }}<br><span style="color: #888">({{ t.currency.iso_code|lower }}: {{ t.amount|negative|floatformat:"2g" }})</span>
+            {% endif %}
+        </td>
+        {% else %}
+        <td></td>
+        {% endif %}
+
+        {% if t.time_transaction < t.account.balances_valid_until %}
+        <td>{{ t.balance_acc_cur|floatformat:"2g" }}
+        </td>
+        {% else %}
+        <td><span style="text-decoration: line-through; color: #CC0000">{{ t.balance_acc_cur|floatformat:"2g" }}</span></td>
+        {% endif %}
+
+        <td><span{% if t.time_transaction.year != t.budget_year or t.time_transaction.month != t.budget_month %} style="background: #FCE4D6;"{% endif %}>{% getperiod t.budget_year t.budget_month %}</span></td>
+
+        {% if t.type == 'DEB' or t.type == 'CRE' %}
+            {% getcats t as cs %}
+        <td>
+            {% if cs.category_quantity == 0 %}
+            <a href="{% url 'manage_transaction_category' t.pk request.get_full_path %}" style="color: #CC0000">Категория не задана</a>
+            {% else %}
+                {% if cs.sum_amount != t.amount_acc_cur %}
+            <a href="{% url 'manage_transaction_category' t.pk request.get_full_path %}" style="color: #CC0000">
+                {% else %}
+            <a href="{% url 'manage_transaction_category' t.pk request.get_full_path %}" alt="Изменить категорию/категории" title="Изменить категорию/категории">
+                {% endif %}
+                {% for c in cs.category_list %}
+                    {{ c }}<br>
+                {% endfor %}
+            </a>
+            {% endif %}
+        </td>
+        {% elif t.type == 'MO+' %}
+            {% if t.sender %}
+        <td>Перемещение из {{ t.sender.account.name }} ({{ t.sender.account.currency.iso_code }})<br>
+            ({{ t.sender.time_transaction|date:"SHORT_DATETIME_FORMAT" }} {{ t.sender.currency.iso_code|lower }}: {{ t.sender.amount|negative|floatformat:"2g" }})&nbsp;
+            <a href="{% url 'delete_join_between_transactions' t.pk request.get_full_path %}"><img src="{% static 'main/images/delete.png' %}" style="max-height:14px" alt="Удалить связь" title="Удалить связь"></a>
+        </td>
+            {% else %}
+        <td>Перемещение из <span style="color: #CC0000">(!!! связь с операцией-источником не установлена !!!)</span><br>
+            <p class="cell-link"><a href="{% url 'set_join_between_transactions' t.pk request.get_full_path %}">Установить связь</a></p>
+        </td>
+            {% endif %}
+        {% else %}
+            {% if t.receiver %}
+        <td>Перемещение в {{ t.receiver.account.name }} ({{ t.receiver.account.currency.iso_code }})<br>
+            ({{ t.receiver.time_transaction|date:"SHORT_DATETIME_FORMAT" }} {{ t.receiver.currency.iso_code|lower }}: {{ t.receiver.amount|floatformat:"2g" }})&nbsp;
+            <a href="{% url 'delete_join_between_transactions' t.pk request.get_full_path %}"><img src="{% static 'main/images/delete.png' %}" style="max-height:14px" alt="Удалить связь" title="Удалить связь"></a>
+        </td>
+            {% else %}
+        <td>Перемещение в <span style="color: #CC0000">(!!! связь с операцией-получателем не установлена !!!)</span><br>
+            <p class="cell-link"><a href="{% url 'set_join_between_transactions' t.pk request.get_full_path %}">Установить связь</a></p>
+        </td>
+            {% endif %}
+        {% endif %}
+
+        <td>{% if t.place %}{{ t.place }} {% endif %}{% if t.description %}{{ t.description }}{% endif %}</td>
+
+        {% if account_type != 'WAL' and account_type != 'SAF' and account_type != 'SAB' and account_type != 'STA' and account_type != 'BCA' and account_type != 'BSA' %}
+        <td>{% if t.mcc_code %}{{ t.mcc_code }} {% endif %}{% if t.banks_category %}{{ t.banks_category }} {% endif %}{% if t.banks_description %}{{ t.banks_description }}{% endif %}</td>
+        {% else %}
+        <td></td>
+        {% endif %}
+
+        <td>{% if t.project %}{{ t.project }}{% endif %}</td>
+
+        <td><a href="{% url 'edit_transaction' t.pk request.get_full_path %}"><img src="{% static 'main/images/edit.png' %}" style="max-height:14px" alt="Изменить операцию" title="Изменить операцию"></a>&nbsp&nbsp&nbsp<a href="{% url 'delete_transaction' t.pk request.get_full_path %}"><img src="{% static 'main/images/delete.png' %}" style="max-height:14px" alt="Удалить операцию" title="Удалить операцию"></a></td>
+
+    </tr>
+    {% endfor %}
+    {% if not transactions %}<tr><td>Нет операций</td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td></tr>{% endif %}
+</table>
 {% endblock %}

@@ -4,6 +4,8 @@ from django.contrib.auth import password_validation
 from django.contrib.auth.forms import AuthenticationForm
 from django.contrib.auth.models import User
 from django.core.exceptions import ValidationError
+from django.forms import BaseInlineFormSet, HiddenInput, inlineformset_factory
+from mptt.forms import TreeNodeChoiceField
 
 from main.models import *
 
@@ -394,3 +396,382 @@ class EditBudgetObjectForm(forms.ModelForm):
         super(EditBudgetObjectForm, self).__init__(*args, **kwargs)
 
 
+class TransactionAddForm(forms.ModelForm):
+    form_time_transaction = \
+        forms.DateTimeField(label='Дата-время операции',
+                            widget=forms.DateTimeInput(attrs={'class': 'form-input'}))
+
+    class Meta:
+        model = Transaction
+        fields = ['type', 'time_transaction', 'form_time_transaction', 'time_zone', 'amount_acc_cur', 'currency',
+                  'amount', 'place', 'description', 'project', 'mcc_code', 'banks_category', 'banks_description',
+                  'budget_year', 'budget_month', 'budget', 'account', 'user_create', 'user_update']
+        widgets = {
+            'type': forms.Select(attrs={'class': 'form-input', 'onchange': 'change_type(this.form)'}),
+            'time_transaction': forms.DateTimeInput(attrs={'class': 'form-input'}),
+            'time_zone': forms.Select(attrs={'class': 'form-input'}),
+            'amount_acc_cur': forms.NumberInput(attrs={'class': 'form-input', 'step': '0.01'}),
+            'currency': forms.Select(attrs={'class': 'form-input', 'onchange': 'change_currency(this.form)'}),
+            'amount': forms.NumberInput(attrs={'class': 'form-input', 'step': '0.01'}),
+            'place': forms.TextInput(attrs={'class': 'form-input'}),
+            'description': forms.TextInput(attrs={'class': 'form-input'}),
+            'project': forms.Select(attrs={'class': 'form-input'}),
+            'mcc_code': forms.TextInput(attrs={'class': 'form-input'}),
+            'banks_category': forms.TextInput(attrs={'class': 'form-input'}),
+            'banks_description': forms.TextInput(attrs={'class': 'form-input'}),
+            'budget_year': forms.NumberInput(attrs={'class': 'form-input'}),
+            'budget_month': forms.Select(attrs={'class': 'form-input'}),
+        }
+
+    def __init__(self, budget_id, *args, **kwargs):
+        super(TransactionAddForm, self).__init__(*args, **kwargs)
+        self.fields['currency'].queryset = Currency.objects.filter(is_frequently_used=1)
+        self.fields['currency'].empty_label = '<валюта не выбрана>'
+        self.fields['type'].help_text = 'ВАЖНО! Для операции с типом "Перемещение приход" сумма и валюта операции ' \
+                                        'должны быть такими же как у операции счета-источника '
+        self.fields['project'].queryset = Project.objects.filter(budget_id=budget_id, is_project_completed=0)
+        self.fields['project'].empty_label = '<текущий приход/расход>'
+
+    def clean_budget_year(self):
+        budget_year = None
+        if self.cleaned_data:
+            budget_year = self.cleaned_data['budget_year']
+            if budget_year < MIN_BUDGET_YEAR or budget_year > MAX_BUDGET_YEAR:
+                self.add_error("budget_year", forms.ValidationError('Укажите корректный год!'))
+        return budget_year
+
+    def clean_time_transaction(self):
+        time_transaction = None
+        if self.cleaned_data:
+            time_transaction = self.cleaned_data['time_transaction']
+            if time_transaction < MIN_TRANSACTION_DATETIME or \
+                    time_transaction > MAX_TRANSACTION_DATETIME:
+                self.add_error("time_transaction", forms.ValidationError('Укажите корректную дату!'))
+        return time_transaction
+
+    def clean_amount_acc_cur(self):
+        amount_acc_cur = None
+        if self.cleaned_data:
+            amount_acc_cur = self.cleaned_data['amount_acc_cur']
+            if not amount_acc_cur:
+                self.add_error("amount_acc_cur", forms.ValidationError('Сумма должна быть отличной от нуля!'))
+        return amount_acc_cur
+
+
+class TransactionCategoryAddForm(forms.ModelForm):
+    category_inc = TreeNodeChoiceField(label='Категория прихода',
+                                       widget=forms.Select(attrs={'class': 'form-input'}),
+                                       queryset=Category.objects.filter(type='INC', budget_id__isnull=True).exclude(
+                                           pk=POSITIVE_EXCHANGE_DIFFERENCE),
+                                       level_indicator='···',
+                                       empty_label='<категория не выбрана>',
+                                       required=False
+                                       )
+    category_exp = TreeNodeChoiceField(label='Категория расхода',
+                                       widget=forms.Select(attrs={'class': 'form-input'}),
+                                       queryset=Category.objects.filter(type='EXP', budget_id__isnull=True).exclude(
+                                           pk=NEGATIVE_EXCHANGE_DIFFERENCE),
+                                       level_indicator='···',
+                                       empty_label='<категория не выбрана>',
+                                       required=False
+                                       )
+    budget_object = forms.ChoiceField(label='Объект бюджета',
+                                      widget=forms.Select(attrs={'class': 'form-input'}),
+                                      required=False
+                                      )
+
+    class Meta:
+        model = TransactionCategory
+        fields = ['transaction', 'category', 'amount_acc_cur', 'budget_year', 'budget_month']
+
+    def __init__(self, budget_id, *args, **kwargs):
+        super(TransactionCategoryAddForm, self).__init__(*args, **kwargs)
+        budget_objects = [(budget_object.id, str(budget_object))
+                          for budget_object in BudgetObject.objects.filter(budget_id=budget_id)]
+        budget_objects.insert(0, (None, '<не задано>'))
+        self.fields['budget_object'].choices = budget_objects
+
+    def clean_category_inc(self):
+        category = None
+        if self.cleaned_data:
+            category = self.cleaned_data['category_inc']
+            if category and category.parent is None:
+                self.add_error("category_inc", forms.ValidationError('Выберите категорию второго уровня!'))
+        return category
+
+    def clean_category_exp(self):
+        category = None
+        if self.cleaned_data:
+            category = self.cleaned_data['category_exp']
+            if category and category.parent is None:
+                self.add_error("category_exp", forms.ValidationError('Выберите категорию второго уровня!'))
+        return category
+
+
+class TransactionEditForm(forms.ModelForm):
+    form_time_transaction = \
+        forms.DateTimeField(label='Дата-время операции',
+                            widget=forms.DateTimeInput(attrs={'class': 'form-input'}))
+
+    class Meta:
+        model = Transaction
+        fields = ['type', 'time_transaction', 'form_time_transaction', 'time_zone', 'amount_acc_cur', 'currency',
+                  'amount', 'place', 'description', 'project', 'mcc_code', 'banks_category', 'banks_description',
+                  'budget_year', 'budget_month']
+        widgets = {
+            'type': forms.Select(attrs={'class': 'form-input'}),
+            'time_transaction': forms.DateTimeInput(attrs={'class': 'form-input'}),
+            'time_zone': forms.Select(attrs={'class': 'form-input'}),
+            'amount_acc_cur': forms.NumberInput(attrs={'class': 'form-input', 'step': '0.01'}),
+            'currency': forms.Select(attrs={'class': 'form-input', 'onchange': 'change_currency(this.form)'}),
+            'amount': forms.NumberInput(attrs={'class': 'form-input', 'step': '0.01'}),
+            'place': forms.TextInput(attrs={'class': 'form-input'}),
+            'description': forms.TextInput(attrs={'class': 'form-input'}),
+            'project': forms.Select(attrs={'class': 'form-input'}),
+            'mcc_code': forms.TextInput(attrs={'class': 'form-input'}),
+            'banks_category': forms.TextInput(attrs={'class': 'form-input'}),
+            'banks_description': forms.TextInput(attrs={'class': 'form-input'}),
+            'budget_year': forms.NumberInput(attrs={'class': 'form-input'}),
+            'budget_month': forms.Select(attrs={'class': 'form-input'}),
+        }
+
+    def __init__(self, budget_id, is_linked_movement, *args, **kwargs):
+        super(TransactionEditForm, self).__init__(*args, **kwargs)
+        self.fields['project'].queryset = Project.objects.filter(budget_id=budget_id, is_project_completed=0)
+        self.fields['project'].empty_label = '<текущий приход/расход>'
+        self.fields['type'].help_text = 'ВАЖНО! Для операции с типом "Перемещение приход" сумма и валюта ' \
+                                        'операции должны быть такими же как у операции счета-источника '
+
+        self.fields['type'].required = False
+        self.fields['type'].disabled = True
+        if is_linked_movement:
+            self.fields['time_transaction'].required = False
+            self.fields['time_transaction'].disabled = True
+            self.fields['form_time_transaction'].required = False
+            self.fields['form_time_transaction'].disabled = True
+            self.fields['time_zone'].required = False
+            self.fields['time_zone'].disabled = True
+            if self.instance.type == 'MO+':
+                self.fields['form_time_transaction'].help_text = 'ВАЖНО! Для изменения даты-времени, часового пояса, ' \
+                                                                 'суммы и валюты операции "Перемещение приход" нужно ' \
+                                                                 'сначала удалить связь с операцией-источником'
+            else:
+                self.fields['form_time_transaction'].help_text = 'ВАЖНО! Для изменения даты-времени, часового пояса, ' \
+                                                                 'суммы и валюты операции "Перемещение расход" нужно ' \
+                                                                 'сначала удалить связь с операцией-получателем'
+            self.fields['currency'].required = False
+            self.fields['currency'].disabled = True
+            self.fields['currency'].queryset = Currency.objects.filter(id=self.instance.currency.id)
+            self.fields['currency'].empty_label = '<валюта не выбрана>'
+            self.fields['amount_acc_cur'].required = False
+            self.fields['amount_acc_cur'].disabled = True
+            self.fields['amount'].required = False
+            self.fields['amount'].disabled = True
+        else:
+            self.fields['currency'].queryset = Currency.objects.filter(is_frequently_used=1)
+            self.fields['currency'].empty_label = '<валюта не выбрана>'
+
+    def get_initial_for_field(self, field, field_name):
+        if self.instance.type in ['DEB', 'MO-'] and field_name == 'amount_acc_cur' and \
+                self.instance.amount_acc_cur != ftod(0.00, 2):
+            return -self.instance.amount_acc_cur
+        elif self.instance.type in ['DEB', 'MO-'] and field_name == 'amount' and \
+                self.instance.amount != ftod(0.00, 2):
+            return -self.instance.amount
+        else:
+            return super(TransactionEditForm, self).get_initial_for_field(field, field_name)
+
+    def clean_budget_year(self):
+        budget_year = None
+        if self.cleaned_data:
+            budget_year = self.cleaned_data['budget_year']
+            if budget_year < MIN_BUDGET_YEAR or budget_year > MAX_BUDGET_YEAR:
+                self.add_error("budget_year", forms.ValidationError('Укажите корректный год!'))
+        return budget_year
+
+    def clean_time_transaction(self):
+        time_transaction = None
+        if self.cleaned_data:
+            time_transaction = self.cleaned_data['time_transaction']
+            if time_transaction < MIN_TRANSACTION_DATETIME or \
+                    time_transaction > MAX_TRANSACTION_DATETIME:
+                self.add_error("time_transaction", forms.ValidationError('Укажите корректную дату!'))
+        return time_transaction
+
+    def clean_amount_acc_cur(self):
+        amount_acc_cur = None
+        if self.cleaned_data:
+            amount_acc_cur = self.cleaned_data['amount_acc_cur']
+            if not amount_acc_cur:
+                self.add_error("amount_acc_cur", forms.ValidationError('Сумма должна быть отличной от нуля!'))
+        return amount_acc_cur
+
+
+class TransactionCategoryEditForm(forms.ModelForm):
+    category_form = TreeNodeChoiceField(label='Категория',
+                                        widget=forms.Select(attrs={'class': 'form-input'}),
+                                        queryset=Category.objects.filter(type='EXP', budget_id__isnull=True),
+                                        level_indicator='···',
+                                        empty_label='<категория не выбрана>',
+                                        required=False
+                                        )
+    budget_object = forms.ChoiceField(label='Объект бюджета',
+                                      widget=forms.Select(attrs={'class': 'form-input'}),
+                                      required=False
+                                      )
+    parent_transaction = None
+
+    class Meta:
+        model = TransactionCategory
+        fields = ['category', 'category_form', 'budget_object', 'amount_acc_cur']
+        field_classes = {
+            'category': TreeNodeChoiceField,
+        }
+        widgets = {
+            'category': forms.Select(attrs={'class': 'form-input'}),
+            'amount_acc_cur': forms.NumberInput(attrs={'class': 'form-input', 'step': '0.01'}),
+        }
+
+    def __init__(self, parent, *args, **kwargs):
+        super(TransactionCategoryEditForm, self).__init__(*args, **kwargs)
+        self.parent_transaction = parent
+        typ = 'INC' if self.parent_transaction.type == 'CRE' else \
+            'EXP' if self.parent_transaction.type == 'DEB' else 'NON'
+        exclude_category = POSITIVE_EXCHANGE_DIFFERENCE if self.parent_transaction.type == 'CRE' else \
+            NEGATIVE_EXCHANGE_DIFFERENCE if self.parent_transaction.type == 'DEB' else 'NON'
+        self.fields['category'].queryset = Category.objects.filter(type=typ).exclude(pk=exclude_category)
+        self.fields['category'].level_indicator = '···'
+        self.fields['category'].empty_label = '<категория не выбрана>'
+        self.fields['category'].required = False
+        self.fields['category_form'].queryset = Category.objects.filter(type=typ, budget_id__isnull=True).exclude(
+            pk=exclude_category)
+        if hasattr(self.instance, 'category'):
+            if self.instance.category:
+                self.fields['category_form'].initial = self.instance.category.get_common_category_id()
+        budget_objects = [(budget_object.id, str(budget_object))
+                          for budget_object in BudgetObject.objects.filter(budget_id=parent.budget.pk)]
+        budget_objects.insert(0, (None, '<не задано>'))
+        self.fields['budget_object'].choices = budget_objects
+        if hasattr(self.instance, 'category'):
+            if self.instance.category:
+                if self.instance.category.budget_object:
+                    self.fields['budget_object'].initial = self.instance.category.budget_object.pk
+
+    def get_initial_for_field(self, field, field_name):
+        if self.parent_transaction.type in ['DEB', 'MO-'] and field_name == 'amount_acc_cur' and \
+                self.instance.amount_acc_cur != ftod(0.00, 2):
+            return -self.instance.amount_acc_cur
+        else:
+            return super(TransactionCategoryEditForm, self).get_initial_for_field(field, field_name)
+
+    def clean_category(self):
+        category = None
+        if self.cleaned_data:
+            category = self.cleaned_data['category']
+            if category and category.parent is None:
+                self.add_error("category", forms.ValidationError('Выберите категорию второго уровня!'))
+        return category
+
+    def clean_category_form(self):
+        category = None
+        if self.cleaned_data:
+            category = self.cleaned_data['category_form']
+            if category and category.parent is None:
+                self.add_error("category_form", forms.ValidationError('Выберите категорию второго уровня!'))
+        return category
+
+    def clean_amount_acc_cur(self):
+        amount_acc_cur = None
+        if self.cleaned_data:
+            amount_acc_cur = self.cleaned_data['amount_acc_cur']
+            category = self.cleaned_data['category']
+            if category and amount_acc_cur == 0.00:
+                self.add_error("amount_acc_cur", forms.ValidationError('Сумма не может равняться нулю!'))
+        return amount_acc_cur
+
+
+class BaseTransactionCategoryFormset(BaseInlineFormSet):
+    deletion_widget = HiddenInput
+
+    def clean(self):
+        result = super(BaseTransactionCategoryFormset, self).clean()
+
+        categories = []
+        amount = ftod(0.00, 2)
+        last_form = None
+        for form in self.forms:
+            if form.cleaned_data:
+                category = form.cleaned_data.get('category', None)
+                if category:
+                    if category in categories:
+                        form.add_error("category",
+                                       forms.ValidationError('Категории в списке не должны дублироваться!'))
+                        form.add_error("category_form",
+                                       forms.ValidationError('Категории в списке не должны дублироваться!'))
+                    categories.append(category)
+                    last_form = form
+                    amount = amount + ftod(form.cleaned_data.get('amount_acc_cur', 0.00), 2)
+        if last_form:
+            if amount != last_form.parent_transaction.amount_acc_cur:
+                if last_form.parent_transaction.type in ['DEB', 'MO-']:
+                    transaction_amount_acc_cur = -last_form.parent_transaction.amount_acc_cur
+                else:
+                    transaction_amount_acc_cur = last_form.parent_transaction.amount_acc_cur
+                last_form.add_error("amount_acc_cur",
+                                    forms.ValidationError('Общая сумма по категориям должна равняться: ' +
+                                                          number_format(transaction_amount_acc_cur,
+                                                                        decimal_pos=2, use_l10n=True,
+                                                                        force_grouping=True
+                                                                        )
+                                                          )
+                                    )
+        else:
+            last_form = self.forms[0]
+            last_form.add_error("category", forms.ValidationError('Должна быть указана хотя бы одна категория!'))
+            last_form.add_error("category_form", forms.ValidationError('Должна быть указана хотя бы одна категория!'))
+
+        return result
+
+    def is_valid(self):
+        any_form_with_category = None
+        if self.is_bound:
+            for i, form in enumerate(self.forms):
+                if hasattr(form, 'cleaned_data'):
+                    if form.cleaned_data:
+                        category = form.cleaned_data.get('category', None)
+                        if not category:
+                            form.cleaned_data['DELETE'] = True
+                        else:
+                            any_form_with_category = form
+        if not any_form_with_category and hasattr(self.forms[0], 'cleaned_data'):
+            self.forms[0].cleaned_data['DELETE'] = False
+        result = super(BaseTransactionCategoryFormset, self).is_valid()
+        return result
+
+    def save(self, commit=True):
+        result = super(BaseTransactionCategoryFormset, self).save(commit=commit)
+        return result
+
+
+TransactionCategoryFormset = inlineformset_factory(Transaction, TransactionCategory,
+                                                   form=TransactionCategoryEditForm,
+                                                   formset=BaseTransactionCategoryFormset,
+                                                   can_delete=True,
+                                                   extra=15,
+                                                   max_num=15,
+                                                   absolute_max=15,
+                                                   )
+
+
+class JoinConfirmationForm(forms.Form):
+    old_time = forms.DateTimeField(label='old_time', widget=forms.DateTimeInput(attrs={'readonly': 'readonly'}))
+    new_time = forms.DateTimeField(label='new_time', widget=forms.DateTimeInput(attrs={'readonly': 'readonly'}))
+    old_currency = forms.CharField(label='old_currency', widget=forms.TextInput(attrs={'readonly': 'readonly'}))
+    new_currency = forms.CharField(label='new_currency', widget=forms.TextInput(attrs={'readonly': 'readonly'}))
+    new_currency_id = forms.IntegerField(label='new_currency_id', widget=forms.HiddenInput(attrs={}))
+    old_amount = forms.DecimalField(label='old_amount', widget=forms.NumberInput(attrs={'readonly': 'readonly'}))
+    new_amount = forms.DecimalField(label='new_amount', widget=forms.NumberInput(attrs={'readonly': 'readonly'}))
+    old_amount_acc_cur = forms.DecimalField(label='old_amount_acc_cur',
+                                            widget=forms.NumberInput(attrs={'readonly': 'readonly'}))
+    new_amount_acc_cur = forms.DecimalField(label='new_amount_acc_cur',
+                                            widget=forms.NumberInput(attrs={'readonly': 'readonly'}))

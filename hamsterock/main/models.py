@@ -2,7 +2,7 @@ from datetime import datetime, timedelta, date, timezone
 from decimal import Decimal
 
 from django.contrib.auth.models import User
-from django.db import models
+from django.db import models, transaction
 from django.db.models import Index
 from django.urls import reverse
 from django.utils.formats import date_format, number_format
@@ -14,13 +14,13 @@ from hamsterock.settings import OXR_API_KEY
 from .pyoxr import *
 
 
-def ftod(val, prec=15):
+def ftod(value, precision=15):
     """
     Функция приведение значения к Decimal с заданной точностью
     """
-    if val is None:
-        val = 0.00
-    return Decimal(val).quantize(Decimal(10) ** -prec)
+    if value is None:
+        value = 0.00
+    return Decimal(value).quantize(Decimal(10) ** -precision)
 
 
 def last_day_of_month(any_day):
@@ -184,6 +184,23 @@ OBJECT_TYPES = [
     ('Питомец', 'Питомец'),
     ('Бизнес', 'Бизнес'),
 ]
+
+TRANSACTION_TYPES = [
+    (None, '<тип не выбран>'),
+    ('CRE', 'Приход'),
+    ('DEB', 'Расход'),
+    ('MO+', 'Перемещение приход'),
+    ('MO-', 'Перемещение расход'),
+]
+DEFAULT_TIME_DELTA = timedelta(1)  # +1 день
+
+DEFAULT_MINUTES_DELTA_FOR_NEW_TRANSACTION = 5
+
+POSITIVE_EXCHANGE_DIFFERENCE = 13
+NEGATIVE_EXCHANGE_DIFFERENCE = 16
+
+DEFAULT_INC_CATEGORY = 12
+DEFAULT_EXP_CATEGORY = 15
 
 
 class Profile(models.Model):
@@ -596,7 +613,7 @@ class Account(models.Model):
                                                  verbose_name='Бюджетные обороты действительны до')
 
     # Для отслеживания изменений отдельных атрибутов заводим для них original_ атрибут,
-    # который заполняем начальным значением по сигналу .post_init (см. файл signals.py)
+    # который заполняем начальным значением по сигналу ".post_init" (см. файл signals.py)
     original_initial_balance = None
     original_is_balances_valid = None
     original_balances_valid_until = None
@@ -636,22 +653,29 @@ class Account(models.Model):
                            ftod(self.initial_balance, 2) - \
                            ftod(self.original_initial_balance, 2)
 
-            # Заменить впоследствии на получение времени из первой операции по счету
-            time_first_transaction = datetime.utcnow()
+            try:
+                time_first_transaction = \
+                    Transaction.objects.filter(budget_id=self.budget_id,
+                                               account_id=self.id,
+                                               ).order_by('time_transaction')[:1][0].time_transaction
+            except Exception as e:
+                time_first_transaction = datetime.utcnow()
 
             rate_base_cur_1 = CurrencyRate.get_rate(self.budget.base_currency_1_id,
                                                     self.currency_id,
                                                     time_first_transaction)
-            self.balance_base_cur_1 = ftod(self.balance_base_cur_1, 2) + \
-                                      ftod(self.initial_balance * rate_base_cur_1, 2) - \
-                                      ftod(self.original_initial_balance * rate_base_cur_1, 2)
+            self.balance_base_cur_1 = \
+                ftod(self.balance_base_cur_1, 2) + \
+                ftod(self.initial_balance * rate_base_cur_1, 2) - \
+                ftod(self.original_initial_balance * rate_base_cur_1, 2)
 
             rate_base_cur_2 = CurrencyRate.get_rate(self.budget.base_currency_2_id,
                                                     self.currency_id,
                                                     time_first_transaction)
-            self.balance_base_cur_2 = ftod(self.balance_base_cur_2, 2) + \
-                                      ftod(self.initial_balance * rate_base_cur_2, 2) - \
-                                      ftod(self.original_initial_balance * rate_base_cur_2, 2)
+            self.balance_base_cur_2 = \
+                ftod(self.balance_base_cur_2, 2) + \
+                ftod(self.initial_balance * rate_base_cur_2, 2) - \
+                ftod(self.original_initial_balance * rate_base_cur_2, 2)
 
             self.is_balances_valid = False
             self.balances_valid_until = MIN_TRANSACTION_DATETIME
@@ -672,6 +696,83 @@ class Account(models.Model):
                 self.group = '6.BUSN'
 
         super(Account, self).save(*args, **kwargs)
+
+
+def get_balance_on_date(self, on_date=None):
+    """
+    Получение остатка по счету/кошельку на дату.
+    Возвращается истинный остаток по счету/кошельку - из последней транзакции, предшествующей указанной дате,
+    или при отсутствии таковой начальный остаток по счету/кошельку.
+    ВАЖНО!!! Остатки актуальны только после успешной отработки процедуры пересчета остатков.
+    :param self: объект счета/кошелька;
+    :param on_date: дата остатка;
+    :return: кортеж (остаток в валюте счета, остаток в базовой валюте, остаток в дополнительной валюте)
+    """
+    if not on_date:
+        return ftod(self.balance, 2), ftod(self.balance_base_cur_1, 2), ftod(self.balance_base_cur_2, 2)
+
+    previous_transactions = \
+        Transaction.objects.filter(budget_id=self.budget_id,
+                                   account_id=self.pk,
+                                   time_transaction__lt=datetime(on_date.year, on_date.month, on_date.day,
+                                                                 0, 0, 0, 0, timezone.utc),
+                                   ).order_by('-time_transaction')[:1]
+    if len(previous_transactions) > 0:
+        return ftod(previous_transactions[0].balance_acc_cur, 2), \
+               ftod(previous_transactions[0].balance_base_cur_1, 2), \
+               ftod(previous_transactions[0].balance_base_cur_2, 2)
+
+    on_date = on_date - timedelta(microseconds=1)
+
+    return ftod(self.initial_balance, 2), \
+        ftod(self.initial_balance *
+             CurrencyRate.get_rate(self.budget.base_currency_1, self.currency_id, on_date), 2), \
+        ftod(self.initial_balance *
+             CurrencyRate.get_rate(self.budget.base_currency_2, self.currency_id, on_date), 2)
+
+
+def get_budget_balance_on_date(self, on_date=None):
+    """
+    Получение балансового остатка по счету/кошельку на конец месяца указанной даты.
+    Возвращается остаток из бюджетных оборотов по счету/кошельку. Отличается от истинного остатка тем, что считается
+    не по операциям, совершенным в данном месяце (по дате операции), а по указанным в операциях бюджетным периодам,
+    которые могут не совпадать с датой операции. При отсутствии бюджетного оборота за месяц указанной даты,
+    берется первый предшествующий период, при отсутствии таковых берется начальный остаток.
+    В бюджете используются именно эти (бюджетные) остатки.
+    ВАЖНО!!! Остатки актуальны только после успешной отработки процедуры пересчета остатков.
+    :param self: объект счета/кошелька;
+    :param on_date: дата остатка;
+    :return: кортеж (остаток в валюте счета, остаток в базовой валюте, остаток в дополнительной валюте)
+    """
+    if not on_date:
+        return ftod(self.balance_base_cur_1, 2), ftod(self.balance_base_cur_2, 2)
+    try:
+        account_turnover = \
+            AccountTurnover.objects.get(budget_id=self.budget_id,
+                                        account_id=self.pk,
+                                        budget_period=datetime(on_date.year, on_date.month, 15,
+                                                               0, 0, 0, 0, timezone.utc)
+                                        )
+        return ftod(account_turnover.begin_balance_base_cur_1, 2), \
+            ftod(account_turnover.begin_balance_base_cur_2, 2)
+    except Exception as e:
+        pass
+    account_turnovers = \
+        AccountTurnover.objects.filter(budget_id=self.budget_id,
+                                       account_id=self.pk,
+                                       budget_period__lt=datetime(on_date.year, on_date.month, 15,
+                                                                  0, 0, 0, 0, timezone.utc)
+                                       ).order_by('-budget_period')[:1]
+    if len(account_turnovers) > 0:
+        return ftod(account_turnovers[0].end_balance_base_cur_1, 2), \
+               ftod(account_turnovers[0].end_balance_base_cur_2, 2)
+
+    on_date = on_date - timedelta(microseconds=1)
+
+    return ftod(self.initial_balance *
+                CurrencyRate.get_rate(self.budget.base_currency_1, self.currency_id, on_date), 2), \
+        ftod(self.initial_balance *
+             CurrencyRate.get_rate(self.budget.base_currency_2, self.currency_id, on_date), 2)
 
 
 class AccountTurnover(models.Model):
@@ -794,8 +895,8 @@ class BudgetObject(models.Model):
             for category_with_object in categories_with_object:
                 try:
                     category_with_object.name = \
-                        Category.objects.get(type=category_with_object.type, item=category_with_object.item[:6]).name + \
-                        ' (' + self.name + ')'
+                        Category.objects.get(type=category_with_object.type,
+                                             item=category_with_object.item[:6]).name + ' (' + self.name + ')'
                     category_with_object.save()
                 except Exception as e:
                     pass
@@ -973,3 +1074,832 @@ class BudgetRegister(models.Model):
                str(self.budget_month) + ' | ' + str(self.category) + ' | ' + project_name
 
 
+class Transaction(models.Model):
+    """
+    Операции по счету/кошельку
+    Операция соответствует фактически совершенной операции с деньгами: получение зарплаты, покупка в магазине, перевод
+    денег на другой счет или другому человеку.
+    Операции имеют несколько базовых типов: приход, расход, перемещение приход, перемещение расход. И два специальных:
+    положительная и отрицательная курсовые разницы.
+    Операция заводится в определенной валюте, которая может отличаться от валюты счета/кошелька.
+    У операции указывается часовой пояс (по умолчанию берется из счета/кошелька), время операции в системе
+    хранится в UTC.
+    Кроме атрибутов самой операции здесь есть атрибуты для расчета бюджета: баланс по счету/кошельку в валюте
+    счета/кошелька, а также в базовой и дополнительной валютах бюджета, курсы базовой и дополнительной валют на дату
+    операции, суммы операции в базовой и дополнительной валютах, год и месяц бюджетного периода.
+    Так как в рамках одной операции, могут быть доходы или расходы по различным категориям, то разбиение суммы операции
+    по категориям вынесено в отдельную модель TransactionCategory.
+    """
+
+    budget = models.ForeignKey('Budget', on_delete=models.PROTECT, verbose_name='Бюджет')
+    account = models.ForeignKey('Account', on_delete=models.PROTECT, related_name='transactions',
+                                verbose_name='Счет/кошелек')
+    type = models.CharField(max_length=3, choices=TRANSACTION_TYPES, null=False, blank=False, verbose_name='Тип')
+    time_transaction = models.DateTimeField(null=False, blank=False, verbose_name='Дата-время операции')
+    time_zone = models.DecimalField(default=0.00, choices=TIME_ZONES, null=False, blank=False, max_digits=5,
+                                    decimal_places=2, verbose_name='Часовой пояс времени операций')
+    amount_acc_cur = models.DecimalField(default=0.00, null=False, blank=False, max_digits=19, decimal_places=2,
+                                         verbose_name='Сумма операции в валюте счета')
+    currency = models.ForeignKey('Currency', on_delete=models.PROTECT, verbose_name='Валюта операции')
+    amount = models.DecimalField(default=0.00, null=False, blank=False, max_digits=19, decimal_places=2,
+                                 verbose_name='Сумма операции')
+    budget_year = models.IntegerField(null=False, blank=False, verbose_name='Год периода бюджета')
+    budget_month = models.IntegerField(choices=MONTHS, null=False, blank=False, verbose_name='Месяц периода бюджета')
+    place = models.CharField(max_length=255, null=True, blank=True, verbose_name='Место совершения операции')
+    description = models.CharField(max_length=255, null=True, blank=True, verbose_name='Описание операции')
+    mcc_code = models.CharField(max_length=4, null=True, blank=True, verbose_name='MCC код от банка')
+    banks_category = models.CharField(max_length=255, null=True, blank=True, verbose_name='Категория операции от банка')
+    banks_description = models.CharField(max_length=255, null=True, blank=True,
+                                         verbose_name='Описание операции от банка')
+    project = models.ForeignKey('Project', on_delete=models.PROTECT, null=True, blank=True, verbose_name='Проект')
+    sender = models.OneToOneField('self', related_name='receiver', on_delete=models.SET_NULL, null=True, blank=True,
+                                  verbose_name='Операция-источник')
+    user_create = models.ForeignKey(User, related_name='user_create', on_delete=models.PROTECT, null=True, blank=True,
+                                    verbose_name='Добавивший операцию в систему')
+    user_update = models.ForeignKey(User, related_name='user_update', on_delete=models.PROTECT, null=True, blank=True,
+                                    verbose_name='Изменивший операцию в системе')
+    time_create = models.DateTimeField(auto_now_add=True, verbose_name='Время создания')
+    time_update = models.DateTimeField(auto_now=True, verbose_name='Время изменения')
+    balance_acc_cur = models.DecimalField(default=0.00, null=False, blank=False, max_digits=19, decimal_places=2,
+                                          verbose_name='Остаток на счете в валюте счета')
+    rate_base_cur_1 = models.DecimalField(default=0.00, null=False, blank=False, max_digits=19,
+                                          decimal_places=9,
+                                          verbose_name='Курс основной базовой валюты')
+    amount_base_cur_1 = models.DecimalField(default=0.00, null=False, blank=False, max_digits=19, decimal_places=2,
+                                            verbose_name='Сумма операции в основной базовой валюте')
+    balance_base_cur_1 = models.DecimalField(default=0.00, null=False, blank=False, max_digits=19, decimal_places=2,
+                                             verbose_name='Остаток на счете в основной базовой валюте')
+    rate_base_cur_2 = models.DecimalField(default=0.00, null=False, blank=False, max_digits=19,
+                                          decimal_places=9,
+                                          verbose_name='Курс дополнительной базовой валюты')
+    amount_base_cur_2 = models.DecimalField(default=0.00, null=False, blank=False, max_digits=19, decimal_places=2,
+                                            verbose_name='Сумма операции в дополнительной базовой валюте')
+    balance_base_cur_2 = models.DecimalField(default=0.00, null=False, blank=False, max_digits=19, decimal_places=2,
+                                             verbose_name='Остаток на счете в дополнительной базовой валюте')
+
+    original_time_transaction = None
+    original_amount_acc_cur = None
+    original_amount_base_cur_1 = None
+    original_amount_base_cur_2 = None
+    original_budget_year = None
+    original_budget_month = None
+    original_sender = None
+    original_project = None
+
+    def __str__(self):
+        type_name = '???'
+        t_types = TRANSACTION_TYPES[:]
+        t_types.extend([('ED+', 'Положительная курсовая разница'), ('ED-', 'Отрицательная курсовая разница')])
+        for typ in t_types:
+            if typ[0] == self.type:
+                type_name = typ[1]
+        amount = self.amount if self.type in ('CRE', 'MO+') else -self.amount
+        amount_acc_cur = self.amount_acc_cur if self.type in ('CRE', 'MO+') else -self.amount_acc_cur
+        currency_separator = ' / ' if amount == amount_acc_cur \
+            else ' / ' + number_format(amount_acc_cur, decimal_pos=2, use_l10n=True, force_grouping=True) + ' ' + \
+                 self.account.currency.iso_code + ' | '
+        place_description = ''
+        if self.place:
+            place_description += ' / ' + str(self.place)
+        if self.description:
+            if not place_description:
+                place_description = ' /'
+            place_description += ' ' + str(self.description)
+        return str(self.account) + ' / ' + type_name + ' / ' + \
+            date_format(self.time_transaction, format='SHORT_DATETIME_FORMAT', use_l10n=True) + \
+            place_description + currency_separator + \
+            number_format(amount, decimal_pos=2, use_l10n=True, force_grouping=True) + ' ' + \
+            self.currency.iso_code
+
+    def get_absolute_url(self):
+        return reverse('transaction', kwargs={'transaction_id': self.pk})
+
+    class Meta:
+        verbose_name = 'Операция'
+        verbose_name_plural = 'Операции'
+        indexes = (Index(fields=['budget', 'account', '-time_transaction'],
+                         name='t__budget_account_time_idx'),
+                   Index(fields=['budget', 'type', '-time_transaction'],
+                         name='t__budget_type_time_idx'),
+                   )
+        ordering = ['budget', 'account', '-time_transaction']
+
+    def save(self, *args, **kwargs):
+        """
+        Триггер на добавление и сохранение объекта операции.
+        Делается попытка установления связи для операций перемещения.
+        Обновляются остатки и бюджетные реквизиты по категориям операции.
+        Обновляются остатки по счету (в валюте счета, в базовой и дополнительной валютах бюджета).
+        Обновляются бюджетные обороты по счету.
+        Устанавливается на счете/кошельке флаг невалидности и дата валидности остатков и бюджетных оборотов.
+        """
+
+        is_amount_acc_cur_change = ftod(self.original_amount_acc_cur, 2) != ftod(self.amount_acc_cur, 2)
+        is_amount_base_cur_1_change = \
+            ftod(self.original_amount_base_cur_1, 2) != ftod(self.amount_base_cur_1, 2)
+        is_amount_base_cur_2_change = \
+            ftod(self.original_amount_base_cur_2, 2) != ftod(self.amount_base_cur_2, 2)
+        is_original_time_transaction_change = self.original_time_transaction != self.time_transaction
+        is_budget_year_change = self.original_budget_year != self.budget_year
+        is_budget_month_change = self.original_budget_month != self.budget_month
+        is_sender_change = self.original_sender != self.sender
+        is_project_change = self.original_project != self.project
+
+        # 1. Изменяем атрибуты самой операции
+        # 1.1. Приравняем сумму операции сумме в валюте счета при валюте операции равной валюте счета, ибо на
+        #      клиента это не выносим, а сделать для консистентности надо!
+        #      А еще при необходимости знак суммы операции сделаем таким же как знак суммы в валюте счета!
+        if self.account.currency.id == self.currency.id:
+            self.amount = ftod(self.amount_acc_cur, 2)
+        else:
+            if self.amount_acc_cur > ftod(0.00, 2) > self.amount or \
+                    self.amount_acc_cur < ftod(0.00, 2) < self.amount:
+                self.amount = -self.amount
+
+        # 1.2. Если дата операции задана без времени, то устанавливаем время, равное время последней операции
+        #      в этом дне плюс несколько минут (или секунду в конце дня)
+        if datetime(self.time_transaction.year, self.time_transaction.month, self.time_transaction.day,
+                    0, 0, 0, 0, timezone.utc) == self.time_transaction:
+            self.time_transaction = self.get_last_transaction_in_day(self.account, self.time_transaction)
+
+        # 2. Для операций перемещения попробуем найти подходящую единственную связанную операцию
+        suitable_transaction = None
+
+        if self.type == 'MO+' and self.sender is None and not is_sender_change or \
+                self.type == 'MO-' and not hasattr(self, 'receiver') or \
+                self.type == 'MO-' and self.receiver is None:
+
+            # Искать будем противоположные операции
+            search_type = 'MO-' if self.type == 'MO+' else 'MO+'
+
+            # Устанавливаем промежуток времени для поиска
+            search_start_time = self.time_transaction - DEFAULT_TIME_DELTA if self.type == 'MO+' \
+                else self.time_transaction
+            search_end_time = self.time_transaction if self.type == 'MO+' \
+                else self.time_transaction + DEFAULT_TIME_DELTA
+
+            # Отбираем операции перемещения заданного типа и в заданном промежутке времени, с инвертированной
+            # суммой операции, в валюте текущего перемещения, без установленной связи, по всем счетам, кроме текущего
+            suitable_transactions = \
+                Transaction.objects.filter(budget_id=self.budget.id,
+                                           time_transaction__gte=search_start_time,
+                                           time_transaction__lte=search_end_time,
+                                           type=search_type,
+                                           amount=-self.amount,
+                                           currency_id=self.currency.id,
+                                           sender__isnull=True,
+                                           receiver__isnull=True
+                                           ).exclude(account_id=self.account.id)
+
+            # Если подходящих транзакций выбралось только одна, то устанавливаем связь
+            if len(suitable_transactions) == 1:
+                suitable_transaction = suitable_transactions[0]
+
+                # Для операции перемещения приход сразу установим источник,
+                # для расхода сразу после сохранения операции (см. чуть ниже)
+                if self.type == 'MO+':
+                    self.sender = suitable_transaction
+
+        # 3. Сохраним саму операцию, ибо в случае новой понадобится её ключ
+        super(Transaction, self).save(*args, **kwargs)
+
+        # ...закончим операцию по связыванию операций из п.2 (нужен был pk новой операции, чтоб в подходящую для
+        # связывания операцию приемник запихать)
+        if self.type == 'MO-' and suitable_transaction:
+            suitable_transaction.sender = self
+            # ВАЖНО! Здесь возникает рекурсия! Но зацикливания не возникнет, ибо все действия в save()
+            # выполняются по условиям изменения некоторых атрибутов, в данном случае меняется только атрибут
+            # sender_id, а его изменение ни в одном из условий не участвует, соответственно, этот save()
+            # "пролетит насквозь" только с одной операцией сохранения транзакции (п.3)
+            suitable_transaction.save()
+
+        # 4. Обновим остатки по категориям операции прихода или расхода
+        if self.type in ['CRE', 'DEB', 'ED+', 'ED-'] and \
+                (is_amount_acc_cur_change or is_amount_base_cur_1_change or is_amount_base_cur_2_change):
+            # 4.1. Получим набор категорий по операции
+            transaction_categories = TransactionCategory.objects.filter(transaction_id=self.pk)
+
+            # 4.2 Кейс с отсутствием категории не обрабатываем, ибо такое возможно при создании - здесь
+            #     категория создастся следом
+            pass
+
+            # 4.3. Если у операции только одна категория, то если у операции сменилась сумма, то поменяем сумму
+            #      и у категории
+            if len(transaction_categories) == 1:
+                is_category_update = False
+                transaction_category = transaction_categories[0]
+
+                # 4.3.1. Обновим основную сумму
+                if is_amount_acc_cur_change:
+                    transaction_category.amount_acc_cur = ftod(self.amount_acc_cur, 2)
+                    is_category_update = True
+
+                # 4.3.2. Обновим сумму в основной базовой валюте
+                if is_amount_base_cur_1_change:
+                    transaction_category.amount_base_cur_1 = ftod(self.amount_base_cur_1, 2)
+                    is_category_update = True
+
+                # 4.3.3. Обновим сумму в дополнительной базовой валюте
+                if is_amount_base_cur_2_change:
+                    transaction_category.amount_base_cur_2 = ftod(self.amount_base_cur_2, 2)
+                    is_category_update = True
+
+                # 4.3.4. Сохраним изменения в категории
+                if is_category_update:
+                    transaction_category.save()
+
+            # 4.4. Если у операции несколько категорий, то творим магию - обновляем суммы у категорий
+            #      в соответствие изменению суммы операций и долям распределения предыдущей суммы операции
+            if len(transaction_categories) > 1:
+                # 4.4.1. Посчитаем текущую сумму
+                previous_categories_sum = ftod(0.00, 2)
+                for transaction_category in transaction_categories:
+                    previous_categories_sum = previous_categories_sum + ftod(transaction_category.amount_acc_cur, 2)
+
+                # 4.4.2. Обновим суммы каждой категории
+                new_sum_amount_acc_cur = ftod(0.00, 2)
+                new_sum_amount_base_cur_1 = ftod(0.00, 2)
+                new_sum_amount_base_cur_2 = ftod(0.00, 2)
+                for i, transaction_category in enumerate(transaction_categories):
+                    if i < len(transaction_categories) - 1:
+                        # Для всех, кроме последней
+                        proportion = transaction_category.amount_acc_cur / previous_categories_sum
+
+                        if is_amount_acc_cur_change:
+                            transaction_category.amount_acc_cur = ftod(self.amount_acc_cur * proportion, 2)
+                        new_sum_amount_acc_cur = new_sum_amount_acc_cur + transaction_category.amount_acc_cur
+
+                        if is_amount_base_cur_1_change:
+                            transaction_category.amount_base_cur_1 = ftod(self.amount_base_cur_1 * proportion, 2)
+                        new_sum_amount_base_cur_1 = new_sum_amount_base_cur_1 + transaction_category.amount_base_cur_1
+
+                        if is_amount_base_cur_2_change:
+                            transaction_category.amount_base_cur_2 = ftod(self.amount_base_cur_2 * proportion, 2)
+                        new_sum_amount_base_cur_2 = new_sum_amount_base_cur_2 + transaction_category.amount_base_cur_2
+
+                    else:
+                        # для последней берем точный остаток от суммы операции за минусом суммы предыдущих
+                        # категорий, чтобы избежать копеек разницы из-за округления
+                        if is_amount_acc_cur_change:
+                            transaction_category.amount_acc_cur = ftod(self.amount_acc_cur - new_sum_amount_acc_cur, 2)
+                        if is_amount_base_cur_1_change:
+                            transaction_category.amount_base_cur_1 = ftod(self.amount_base_cur_1 -
+                                                                          new_sum_amount_base_cur_1, 2)
+
+                        if is_amount_base_cur_2_change:
+                            transaction_category.amount_base_cur_2 = ftod(self.amount_base_cur_2 -
+                                                                          new_sum_amount_base_cur_2, 2)
+
+                    transaction_category.save()
+
+        # 5. Обновим период и проект по категориям операции прихода или расхода
+        if self.type in ['CRE', 'DEB'] and \
+                (is_budget_year_change or is_budget_month_change or is_project_change):
+            transaction_categories = TransactionCategory.objects.filter(transaction_id=self.pk)
+            for transaction_category in transaction_categories:
+                transaction_category.budget_year = self.budget_year
+                transaction_category.budget_month = self.budget_month
+                transaction_category.project = self.project
+                transaction_category.save()
+
+        # 6. Обновим остатки по счету: и основной остаток, и остатки в базовых валютах
+        #    ВАЖНО! Также при изменении суммы в валюте счета или даты операции установим флаг невалидности
+        #    остатков и поменяем дату в "Остатки действительны до" при условии, что дата операции раньше
+        #    предыдущего значения этого поля п.6.4.
+        is_account_update = False
+
+        # 6.1. Обновим основной остаток по счету
+        if is_amount_acc_cur_change:
+            self.account.balance = ftod(self.account.balance, 2) + ftod(self.amount_acc_cur, 2) - \
+                                   ftod(self.original_amount_acc_cur, 2)
+            is_account_update = True
+
+        # 6.2. Обновим остаток по счету в основной базовой валюте
+        if is_amount_base_cur_1_change:
+            self.account.balance_base_cur_1 = ftod(self.account.balance_base_cur_1, 2) + \
+                                              ftod(self.amount_base_cur_1, 2) - \
+                                              ftod(self.original_amount_base_cur_1, 2)
+            is_account_update = True
+
+        # 6.3. Обновим остаток по счету в дополнительной базовой валюте
+        if is_amount_base_cur_2_change:
+            self.account.balance_base_cur_2 = ftod(self.account.balance_base_cur_2, 2) + \
+                                              ftod(self.amount_base_cur_2, 2) - \
+                                              ftod(self.original_amount_base_cur_2, 2)
+            is_account_update = True
+
+        # 6.4. Установим флаг невалидности остатков и при необходимости поменяем дату Остатки действительны до
+        if is_original_time_transaction_change or is_amount_acc_cur_change or is_sender_change:
+            if self.account.is_balances_valid:
+                self.account.is_balances_valid = False
+                is_account_update = True
+
+            if self.original_time_transaction:
+                earlier_time_transaction = min(self.original_time_transaction, self.time_transaction)
+            else:
+                earlier_time_transaction = self.time_transaction
+
+            if self.account.balances_valid_until > earlier_time_transaction:
+                self.account.balances_valid_until = earlier_time_transaction
+                is_account_update = True
+
+        # 6.5 Обновим обороты в Бюджетных оборотах по счету если поменялись суммы или период
+        if is_amount_base_cur_1_change or is_amount_base_cur_2_change or \
+                is_budget_year_change or is_budget_month_change:
+
+            if is_budget_year_change or is_budget_month_change:
+                # Если поменялся период, то сначала снесем в старом периоде предыдущие суммы,
+                # затем в новый период добавим новые суммы
+                if self.original_budget_year:
+                    account_turnover, created = \
+                        AccountTurnover.objects.get_or_create(budget_id=self.budget.pk,
+                                                              account_id=self.account.pk,
+                                                              budget_period=datetime(self.original_budget_year,
+                                                                                     self.original_budget_month,
+                                                                                     15, 0, 0, 0, 0, timezone.utc))
+                    if self.type in ['MO+', 'CRE', 'ED+']:
+                        account_turnover.credit_turnover_base_cur_1 = \
+                            ftod(account_turnover.credit_turnover_base_cur_1, 2) - \
+                            ftod(self.original_amount_base_cur_1, 2)
+                        account_turnover.credit_turnover_base_cur_2 = \
+                            ftod(account_turnover.credit_turnover_base_cur_2, 2) - \
+                            ftod(self.original_amount_base_cur_2, 2)
+                    else:
+                        account_turnover.debit_turnover_base_cur_1 = \
+                            ftod(account_turnover.debit_turnover_base_cur_1, 2) - \
+                            ftod(self.original_amount_base_cur_1, 2)
+                        account_turnover.debit_turnover_base_cur_2 = \
+                            ftod(account_turnover.debit_turnover_base_cur_2, 2) - \
+                            ftod(self.original_amount_base_cur_2, 2)
+                    account_turnover.save()
+
+                account_turnover, created = \
+                    AccountTurnover.objects.get_or_create(budget_id=self.budget.pk,
+                                                          account_id=self.account.pk,
+                                                          budget_period=datetime(self.budget_year,
+                                                                                 self.budget_month,
+                                                                                 15, 0, 0, 0, 0, timezone.utc))
+                if self.type in ['MO+', 'CRE', 'ED+']:
+                    account_turnover.credit_turnover_base_cur_1 = \
+                        ftod(account_turnover.credit_turnover_base_cur_1, 2) + ftod(self.amount_base_cur_1, 2)
+                    account_turnover.credit_turnover_base_cur_2 = \
+                        ftod(account_turnover.credit_turnover_base_cur_2, 2) + ftod(self.amount_base_cur_2, 2)
+                else:
+                    account_turnover.debit_turnover_base_cur_1 = \
+                        ftod(account_turnover.debit_turnover_base_cur_1, 2) + ftod(self.amount_base_cur_1, 2)
+                    account_turnover.debit_turnover_base_cur_2 = \
+                        ftod(account_turnover.debit_turnover_base_cur_2, 2) + ftod(self.amount_base_cur_2, 2)
+                account_turnover.save()
+
+            else:
+                # Если период не менялся, то запишем дельту изменения суммы
+                account_turnover, created = \
+                    AccountTurnover.objects.get_or_create(budget_id=self.budget.pk,
+                                                          account_id=self.account.pk,
+                                                          budget_period=datetime(self.budget_year,
+                                                                                 self.budget_month,
+                                                                                 15, 0, 0, 0, 0, timezone.utc))
+                if self.type in ['MO+', 'CRE', 'ED+']:
+                    account_turnover.credit_turnover_base_cur_1 = \
+                        ftod(account_turnover.credit_turnover_base_cur_1, 2) - \
+                        ftod(self.original_amount_base_cur_1, 2) + \
+                        ftod(self.amount_base_cur_1, 2)
+                    account_turnover.credit_turnover_base_cur_2 = \
+                        ftod(account_turnover.credit_turnover_base_cur_2, 2) - \
+                        ftod(self.original_amount_base_cur_2, 2) + \
+                        ftod(self.amount_base_cur_2, 2)
+                else:
+                    account_turnover.debit_turnover_base_cur_1 = \
+                        ftod(account_turnover.debit_turnover_base_cur_1, 2) - \
+                        ftod(self.original_amount_base_cur_1, 2) + \
+                        ftod(self.amount_base_cur_1, 2)
+                    account_turnover.debit_turnover_base_cur_2 = \
+                        ftod(account_turnover.debit_turnover_base_cur_2, 2) - \
+                        ftod(self.original_amount_base_cur_2, 2) + \
+                        ftod(self.amount_base_cur_2, 2)
+                account_turnover.save()
+
+            # Снесем флаг валидности бюджетных оборотов по счету и год, месяц валидности бюджетных оборотов
+            if self.account.is_turnovers_valid:
+                self.account.is_turnovers_valid = False
+                is_account_update = True
+
+            if self.original_budget_year:
+                if datetime(self.budget_year, self.budget_month, 15, 0, 0, 0, 0, timezone.utc) <= \
+                        datetime(self.original_budget_year, self.original_budget_month, 15, 0, 0, 0, 0, timezone.utc):
+                    turnovers_valid_until = datetime(self.budget_year, self.budget_month, 15, 0, 0, 0, 0, timezone.utc)
+                else:
+                    turnovers_valid_until = datetime(self.original_budget_year, self.original_budget_month,
+                                                     15, 0, 0, 0, 0, timezone.utc)
+            else:
+                turnovers_valid_until = datetime(self.budget_year, self.budget_month, 15, 0, 0, 0, 0, timezone.utc)
+
+            if self.account.turnovers_valid_until > turnovers_valid_until:
+                self.account.turnovers_valid_until = turnovers_valid_until
+                is_account_update = True
+
+        # 6.6. Сохраним изменения по счету
+        if is_account_update:
+            self.account.save()
+
+    def delete(self, *args, **kwargs):
+        """
+        Триггер на удаление объекта операции.
+        Удаляются категории операции.
+        Разрывается связь для операции перемещения расход.
+        Обновляются остатки по счету (в валюте счета, в базовой и дополнительной валютах бюджета).
+        Обновляются бюджетные обороты по счету.
+        Устанавливается на счете/кошельке флаг невалидности и дата валидности остатков и бюджетных оборотов.
+        """
+
+        try:
+            with transaction.atomic():
+
+                # Удалим категории операции
+                transaction_categories = TransactionCategory.objects.filter(transaction_id=self.pk)
+                for transaction_category in transaction_categories:
+                    transaction_category.delete()
+
+                # Обновим остаток в валюте счета по счету
+                self.account.balance = ftod(self.account.balance, 2) - ftod(self.original_amount_acc_cur, 2)
+
+                # Обновим остаток по счету в основной базовой валюте бюджета
+                self.account.balance_base_cur_1 = \
+                    ftod(self.account.balance_base_cur_1, 2) - \
+                    ftod(self.original_amount_base_cur_1, 2)
+
+                # Обновим остаток по счету в дополнительной базовой валюте бюджета
+                self.account.balance_base_cur_2 = \
+                    ftod(self.account.balance_base_cur_2, 2) - \
+                    ftod(self.original_amount_base_cur_2, 2)
+
+                # Снесем флаг валидности остатков по счету
+                if self.account.is_balances_valid:
+                    self.account.is_balances_valid = False
+
+                # Обновим дату валидности остатков по счету
+                if self.account.balances_valid_until > self.original_time_transaction:
+                    self.account.balances_valid_until = self.original_time_transaction
+
+                # Обновим бюджетные обороты по счету
+                account_turnover, created = \
+                    AccountTurnover.objects.get_or_create(budget_id=self.budget.pk,
+                                                          account_id=self.account.pk,
+                                                          budget_period=datetime(self.original_budget_year,
+                                                                                 self.original_budget_month,
+                                                                                 15, 0, 0, 0, 0, timezone.utc))
+
+                if self.type in ['MO+', 'CRE', 'ED+']:
+                    account_turnover.credit_turnover_base_cur_1 = \
+                        ftod(account_turnover.credit_turnover_base_cur_1, 2) - ftod(self.original_amount_base_cur_1, 2)
+                    account_turnover.credit_turnover_base_cur_2 = \
+                        ftod(account_turnover.credit_turnover_base_cur_2, 2) - ftod(self.original_amount_base_cur_2, 2)
+                else:
+                    account_turnover.debit_turnover_base_cur_1 = \
+                        ftod(account_turnover.debit_turnover_base_cur_1, 2) - ftod(self.original_amount_base_cur_1, 2)
+                    account_turnover.debit_turnover_base_cur_2 = \
+                        ftod(account_turnover.debit_turnover_base_cur_2, 2) - ftod(self.original_amount_base_cur_2, 2)
+                account_turnover.save()
+
+                # Снесем флаг валидности бюджетных оборотов
+                if self.account.is_turnovers_valid:
+                    self.account.is_turnovers_valid = False
+
+                # Обновим дату валидности бюджетных оборотов
+                turnovers_valid_until = datetime(self.original_budget_year, self.original_budget_month,
+                                                 15, 0, 0, 0, 0, timezone.utc)
+                if self.account.turnovers_valid_until > turnovers_valid_until:
+                    self.account.turnovers_valid_until = turnovers_valid_until
+
+                # Сохраним изменения по счету
+                self.account.save()
+
+                # Для перемещения расход разорвем связь с приемником
+                if self.type == 'MO-':
+                    if hasattr(self, 'receiver'):
+                        if self.receiver:
+                            changed_transaction = self.receiver
+                            changed_transaction.sender = None
+                            changed_transaction.save()
+
+                # Удалим саму операцию
+                super(Transaction, self).delete(*args, **kwargs)
+
+        except Exception as e:
+            print('Что-то пошло не так с удалением операции - ' + str(e))
+
+    @classmethod
+    def get_last_transaction_in_day(cls, account=None, searching_day=None):
+        """
+        Получение даты-времени последней операции по счету в заданную дату плюс дельту для новой операции.
+        :param account: счет;
+        :param searching_day: дата;
+        :return: дата-время последней операции.
+        """
+
+        # Если какой-то из параметров не задан, то возвращаем дефолтные значения
+        if not account:
+            if not searching_day:
+                return datetime.utcnow()
+            else:
+                return datetime(searching_day.year, searching_day.month, searching_day.day,
+                                0, 0, 0, 0, timezone.utc) + \
+                       timedelta(hours=12)
+
+        # Отберем операции по счету в заданную дату
+        searching_day_start = datetime(searching_day.year, searching_day.month, searching_day.day,
+                                       0, 0, 0, 0, timezone.utc)
+        searching_day_end = datetime(searching_day.year, searching_day.month, searching_day.day,
+                                     23, 59, 59, 999999, timezone.utc)
+        suitable_transactions = \
+            Transaction.objects.filter(budget_id=account.budget.id,
+                                       account_id=account.id,
+                                       time_transaction__gte=searching_day_start,
+                                       time_transaction__lte=searching_day_end,
+                                       ).exclude(type__in=['ED+', 'ED-']).order_by('-time_transaction')
+        if suitable_transactions:
+            # Операции нашлись, берем дату-время последней и прибавляем дельту
+            time_last_transaction_in_day = suitable_transactions[0].time_transaction
+            if time_last_transaction_in_day.hour == 23 and \
+                    time_last_transaction_in_day.minute + DEFAULT_MINUTES_DELTA_FOR_NEW_TRANSACTION > 59:
+                return suitable_transactions[0].time_transaction + \
+                       timedelta(seconds=1)
+            else:
+                return suitable_transactions[0].time_transaction + \
+                       timedelta(minutes=DEFAULT_MINUTES_DELTA_FOR_NEW_TRANSACTION)
+        else:
+            # Операции не нашлись, возвращаем полдень указанной даты
+            return datetime(searching_day.year, searching_day.month, searching_day.day,
+                            0, 0, 0, 0, timezone.utc) + \
+                   timedelta(hours=12)
+
+
+class TransactionCategory(models.Model):
+    """
+    Категории операции
+    Здесь хранится разбивка суммы операции по категориям. Только для операций с типом: приход и расход.
+    Также здесь есть атрибуты для расчета бюджета: суммы категории операции в базовой и дополнительной валютах,
+    год и месяц бюджетного периода и проект.
+    """
+
+    transaction = models.ForeignKey('Transaction', on_delete=models.CASCADE,
+                                    related_name='transaction_categories', verbose_name='Операция')
+    category = models.ForeignKey('Category', on_delete=models.PROTECT, verbose_name='Категория')
+    amount_acc_cur = models.DecimalField(default=0.00, null=False, blank=False, max_digits=19, decimal_places=2,
+                                         verbose_name='Сумма для категории в валюте счета')
+    amount_base_cur_1 = models.DecimalField(default=0.00, null=False, blank=False, max_digits=19, decimal_places=2,
+                                            verbose_name='Сумма для категории в основной базовой валюте')
+    amount_base_cur_2 = models.DecimalField(default=0.00, null=False, blank=False, max_digits=19, decimal_places=2,
+                                            verbose_name='Сумма для категории в дополнительной базовой валюте')
+    budget_year = models.IntegerField(null=False, blank=False, verbose_name='Год периода бюджета')
+    budget_month = models.IntegerField(choices=MONTHS, null=False, blank=False,
+                                       verbose_name='Месяц периода бюджета')
+    project = models.ForeignKey('Project', on_delete=models.PROTECT, null=True, blank=True, verbose_name='Проект')
+
+    original_budget_year = None
+    original_budget_month = None
+    original_category = None
+    original_is_project = None
+    original_project = None
+    original_amount_base_cur_1 = ftod(0.00, 2)
+    original_amount_base_cur_2 = ftod(0.00, 2)
+
+    def __str__(self):
+        if self.category:
+            category_name = self.category.name
+        else:
+            category_name = '<категория не выбрана>'
+        return str(self.transaction) + ' : ' + category_name + ' ' + \
+            number_format(self.amount_acc_cur, decimal_pos=2, use_l10n=True, force_grouping=True)
+
+    def get_absolute_url(self):
+        return reverse('transaction_category', kwargs={'transaction_category_id': self.pk})
+
+    class Meta:
+        verbose_name = 'Категория операции'
+        verbose_name_plural = 'Категории операций'
+        ordering = ['pk']
+
+    def save(self, *args, **kwargs):
+        """
+        Триггер на добавление и сохранение объекта категории операции.
+        Обновляются бюджетные регистры.
+        """
+
+        # Запишем год и месяц бюджета из операции, если не указаны
+        if not self.budget_year:
+            self.budget_year = self.transaction.budget_year
+        if not self.budget_month:
+            self.budget_month = self.transaction.budget_month
+        if not self.project and self.transaction.project:
+            self.project = self.transaction.project
+
+        # Сохраним категорию
+        result = super(TransactionCategory, self).save(*args, **kwargs)
+
+        if hasattr(self, 'category') and self.category:
+
+            # Запишем обновление в регистр бюджета
+            is_budget_year_change = self.original_budget_year != self.budget_year
+            is_budget_month_change = self.original_budget_month != self.budget_month
+            is_project_change = self.original_project != self.project
+            is_category_change = self.original_category != self.category
+            is_key_change = is_budget_year_change or is_budget_month_change or is_project_change or is_category_change
+
+            is_amount_base_cur_1_change = \
+                ftod(self.original_amount_base_cur_1, 2) != ftod(self.amount_base_cur_1, 2)
+            is_amount_base_cur_2_change = \
+                ftod(self.original_amount_base_cur_2, 2) != ftod(self.amount_base_cur_2, 2)
+            is_amount_change = is_amount_base_cur_1_change or is_amount_base_cur_2_change
+            is_amount_zero = \
+                not is_amount_change and \
+                ftod(self.amount_base_cur_1, 2) == ftod(0.00, 2) and \
+                ftod(self.amount_base_cur_2, 2) == ftod(0.00, 2)
+
+            # Проверка на необходимость изменения бюджетных регистров (суммы не нулевые, изменен ключ или сумма)
+            if not (is_amount_zero or not is_amount_change and not is_key_change):
+
+                if not is_key_change:
+
+                    # Обновим состояние регистра (прибавим дельту), ибо ключ не поменялся
+                    if self.project:
+                        # С проектом
+                        try:
+                            budget_register, created = \
+                                BudgetRegister.objects.get_or_create(budget_id=self.transaction.budget_id,
+                                                                     budget_year=self.budget_year,
+                                                                     budget_month=self.budget_month,
+                                                                     category_id=self.category.id,
+                                                                     project_id=self.project.id)
+                            budget_register.actual_amount_base_cur_1 = \
+                                ftod(budget_register.actual_amount_base_cur_1, 2) - \
+                                ftod(self.original_amount_base_cur_1, 2) + \
+                                ftod(self.amount_base_cur_1, 2)
+                            budget_register.actual_amount_base_cur_2 = \
+                                ftod(budget_register.actual_amount_base_cur_2, 2) - \
+                                ftod(self.original_amount_base_cur_2, 2) + \
+                                ftod(self.amount_base_cur_2, 2)
+                            budget_register.save()
+                        except Exception as e:
+                            pass
+                    else:
+                        # Без проекта
+                        try:
+                            budget_register, created = \
+                                BudgetRegister.objects.get_or_create(budget_id=self.transaction.budget_id,
+                                                                     budget_year=self.budget_year,
+                                                                     budget_month=self.budget_month,
+                                                                     category_id=self.category.id,
+                                                                     project_id__isnull=True)
+                            budget_register.actual_amount_base_cur_1 = \
+                                ftod(budget_register.actual_amount_base_cur_1, 2) - \
+                                ftod(self.original_amount_base_cur_1, 2) + \
+                                ftod(self.amount_base_cur_1, 2)
+                            budget_register.actual_amount_base_cur_2 = \
+                                ftod(budget_register.actual_amount_base_cur_2, 2) - \
+                                ftod(self.original_amount_base_cur_2, 2) + \
+                                ftod(self.amount_base_cur_2, 2)
+                            budget_register.save()
+                        except Exception as e:
+                            pass
+                else:
+
+                    # Удаляем предыдущее состояние по старому ключу.
+                    # Только если запись не новая (смотрим по notnull поля Год) и предыдущая сумма не нулевая.
+                    if self.original_budget_year and \
+                            (ftod(self.original_amount_base_cur_1, 2) != ftod(0.00, 2) or
+                             ftod(self.original_amount_base_cur_2, 2) != ftod(0.00, 2)):
+                        if self.original_project:
+                            # С проектом
+                            try:
+                                budget_register, created = \
+                                    BudgetRegister.objects.get_or_create(budget_id=self.transaction.budget_id,
+                                                                         budget_year=self.original_budget_year,
+                                                                         budget_month=self.original_budget_month,
+                                                                         category_id=self.original_category.id,
+                                                                         project_id=self.original_project.id)
+                                budget_register.actual_amount_base_cur_1 = \
+                                    ftod(budget_register.actual_amount_base_cur_1, 2) - \
+                                    ftod(self.original_amount_base_cur_1, 2)
+                                budget_register.actual_amount_base_cur_2 = \
+                                    ftod(budget_register.actual_amount_base_cur_2, 2) - \
+                                    ftod(self.original_amount_base_cur_2, 2)
+                                budget_register.save()
+                            except Exception as e:
+                                pass
+                        else:
+                            # Без проекта
+                            try:
+                                budget_register, created = \
+                                    BudgetRegister.objects.get_or_create(budget_id=self.transaction.budget_id,
+                                                                         budget_year=self.original_budget_year,
+                                                                         budget_month=self.original_budget_month,
+                                                                         category_id=self.original_category.id,
+                                                                         project_id__isnull=True)
+                                budget_register.actual_amount_base_cur_1 = \
+                                    ftod(budget_register.actual_amount_base_cur_1, 2) - \
+                                    ftod(self.original_amount_base_cur_1, 2)
+                                budget_register.actual_amount_base_cur_2 = \
+                                    ftod(budget_register.actual_amount_base_cur_2, 2) - \
+                                    ftod(self.original_amount_base_cur_2, 2)
+                                budget_register.save()
+                            except Exception as e:
+                                pass
+                    else:
+                        # Не будем удалять предыдущее состояние по старому ключу, ибо или запись новая,
+                        # или предыдущие суммы нулевые
+                        pass
+
+                    # Запишем в регистр новое состояние по новому ключу, если новые суммы не нулевые
+                    if ftod(self.amount_base_cur_1, 2) != ftod(0.00, 2) or \
+                            ftod(self.amount_base_cur_2, 2) != ftod(0.00, 2):
+                        if self.project:
+                            # С проектом
+                            try:
+                                budget_register, created = \
+                                    BudgetRegister.objects.get_or_create(budget_id=self.transaction.budget_id,
+                                                                         budget_year=self.budget_year,
+                                                                         budget_month=self.budget_month,
+                                                                         category_id=self.category.id,
+                                                                         project_id=self.project.id)
+                                budget_register.actual_amount_base_cur_1 = \
+                                    ftod(budget_register.actual_amount_base_cur_1, 2) + \
+                                    ftod(self.amount_base_cur_1, 2)
+                                budget_register.actual_amount_base_cur_2 = \
+                                    ftod(budget_register.actual_amount_base_cur_2, 2) + \
+                                    ftod(self.amount_base_cur_2, 2)
+                                budget_register.save()
+                            except Exception as e:
+                                pass
+                        else:
+                            # Без проекта
+                            try:
+                                budget_register, created = \
+                                    BudgetRegister.objects.get_or_create(budget_id=self.transaction.budget_id,
+                                                                         budget_year=self.budget_year,
+                                                                         budget_month=self.budget_month,
+                                                                         category_id=self.category.id,
+                                                                         project_id__isnull=True)
+                                budget_register.actual_amount_base_cur_1 = \
+                                    ftod(budget_register.actual_amount_base_cur_1, 2) + \
+                                    ftod(self.amount_base_cur_1, 2)
+                                budget_register.actual_amount_base_cur_2 = \
+                                    ftod(budget_register.actual_amount_base_cur_2, 2) + \
+                                    ftod(self.amount_base_cur_2, 2)
+                                budget_register.save()
+                            except Exception as e:
+                                pass
+                    else:
+                        # Не стали записывать в регистр новое состояние по новому ключу, ибо новые суммы нулевые
+                        pass
+            else:
+                # Не будем ничего делать с регистром бюджета, ибо или суммы нулевые, или равные суммы и ключи
+                pass
+
+        return result
+
+    def delete(self, *args, **kwargs):
+        """
+        Триггер на удаление объекта категории операции.
+        Обновляются бюджетные регистры.
+        """
+
+        # Удаляем предыдущее состояние (только если запись не новая - смотрим по notnull полю Год)
+        if self.original_budget_year:
+            # С проектом
+            if self.original_project:
+                try:
+                    budget_register = \
+                        BudgetRegister.objects.get(budget_id=self.transaction.budget_id,
+                                                   budget_year=self.original_budget_year,
+                                                   budget_month=self.original_budget_month,
+                                                   category_id=self.original_category.id,
+                                                   project_id=self.original_project.id)
+                    budget_register.actual_amount_base_cur_1 = \
+                        budget_register.actual_amount_base_cur_1 - ftod(self.original_amount_base_cur_1, 2)
+                    budget_register.actual_amount_base_cur_2 = \
+                        budget_register.actual_amount_base_cur_2 - ftod(self.original_amount_base_cur_2, 2)
+                    budget_register.save()
+                except Exception as e:
+                    pass
+            else:
+                # Без проекта
+                try:
+                    budget_register = \
+                        BudgetRegister.objects.get(budget_id=self.transaction.budget_id,
+                                                   budget_year=self.original_budget_year,
+                                                   budget_month=self.original_budget_month,
+                                                   category_id=self.original_category.id,
+                                                   project_id__isnull=True)
+                    budget_register.actual_amount_base_cur_1 = \
+                        budget_register.actual_amount_base_cur_1 - ftod(self.original_amount_base_cur_1, 2)
+                    budget_register.actual_amount_base_cur_2 = \
+                        budget_register.actual_amount_base_cur_2 - ftod(self.original_amount_base_cur_2, 2)
+                    budget_register.save()
+                except Exception as e:
+                    pass
+
+        # Удалим саму категорию операции
+        result = super(TransactionCategory, self).delete(*args, **kwargs)
+
+        return result

@@ -1,0 +1,11 @@
+{% extends 'main/base.html' %}
+
+{% block content %}
+<h1>{{title}}</h1>
+<form method="post">
+    {% csrf_token %}
+    <p>Удалить операцию <strong>{{ transaction_name }}</strong>?</p>
+    <button type="submit">Удалить операцию</button> <a href="{{ return_url }}"><input type="button" value="Отмена"></a>
+</form>
+
+{% endblock %}

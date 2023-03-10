@@ -59,6 +59,7 @@ INSTALLED_APPS = [
     'debug_toolbar',
     'captcha',
     'mptt',
+    'django_filters',
     'main.apps.MainConfig',
 ]
 
