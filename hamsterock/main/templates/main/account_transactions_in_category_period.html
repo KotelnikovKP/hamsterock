@@ -1,0 +1,76 @@
+{% extends 'main/base.html' %}
+{% load main_tags %}
+{% load static %}
+
+{% block content %}
+<h1>{{title}}</h1>
+<p> </p>
+<table class="table-transactions-in-category-period">
+    <tr>
+        <th>ДАТА-ВРЕМЯ UTC</th>
+        <th>СЧЕТ/КОШЕЛЕК</th>
+        <th>СУММА</th>
+        <th>СУММА В {{ currency_iso }}</th>
+        <th>ПЕРИОД</th>
+        <th>КАТЕГОРИЯ</th>
+        <th>ЛОКАЦИЯ И ОПИСАНИЕ ОПЕРАЦИИ</th>
+        <th>ИНФОРМАЦИЯ ОТ БАНКА</th>
+        <th>ПРОЕКТ</th>
+    </tr>
+    {% for t in transactions %}
+    <tr>
+        <td><a href="{% url 'edit_transaction' t.pk request.get_full_path %}" alt="Изменить операцию" title="Изменить операцию"{% if t.time_transaction.year != t.budget_year or t.time_transaction.month != t.budget_month %} style="background: #FCE4D6;"{% endif %}>{{ t.time_transaction|date:"SHORT_DATETIME_FORMAT" }}</a></td>
+        <td>{{ t.account }}</td>
+        <td>
+        {% if t.type == 'CRE' %}
+            {% if t.currency.id == t.account.currency.id %}
+                {{ t.amount_acc_cur|floatformat:"2g" }}
+            {% else %}
+                {{ t.amount_acc_cur|floatformat:"2g" }}<br><span style="color: #888">({{ t.currency.iso_code|lower }}: {{ t.amount|floatformat:"2g" }})</span>
+            {% endif %}
+        {% endif %}
+        {% if t.type == 'DEB' %}
+            {% if t.currency.id == t.account.currency.id %}
+                {{ t.amount_acc_cur|negative|floatformat:"2g" }}
+            {% else %}
+                {{ t.amount_acc_cur|negative|floatformat:"2g" }}<br><span style="color: #888">({{ t.currency.iso_code|lower }}: {{ t.amount|negative|floatformat:"2g" }})</span>
+            {% endif %}
+        {% endif %}
+        </td>
+        <td>
+        {% if t.type == 'CRE' %}
+            {% if num_base_currency == 1 %}
+                {{ t.amount_base_cur_1|floatformat:"2g" }}
+            {% else %}
+                {{ t.amount_base_cur_2|floatformat:"2g" }}
+            {% endif %}
+        {% endif %}
+        {% if t.type == 'DEB' %}
+            {% if num_base_currency == 1 %}
+                {{ t.amount_base_cur_1|negative|floatformat:"2g" }}
+            {% else %}
+                {{ t.amount_base_cur_2|negative|floatformat:"2g" }}
+            {% endif %}
+        {% endif %}
+        </td>
+        <td><span{% if t.time_transaction.year != t.budget_year or t.time_transaction.month != t.budget_month %} style="background: #FCE4D6;"{% endif %}>{% getperiod t.budget_year t.budget_month %}</span></td>
+        {% getcatsextra t num_base_currency as cs %}
+        <td><a href="{% url 'manage_transaction_category' t.pk request.get_full_path %}" alt="Изменить категорию/категории" title="Изменить категорию/категории">
+            {% for c in cs.category_list %}
+                {{ c }}<br>
+            {% endfor %}
+        </a></td>
+        <td>{% if t.place %}{{ t.place }} {% endif %}{% if t.description %}{{ t.description }}{% endif %}</td>
+        <td>
+        {% if account_type != 'WAL' and account_type != 'SAF' and account_type != 'SAB' and account_type != 'STA' and account_type != 'BCA' and account_type != 'BSA' %}
+            {% if t.mcc_code %}{{ t.mcc_code }} {% endif %}{% if t.banks_category %}{{ t.banks_category }} {% endif %}{% if t.banks_description %}{{ t.banks_description }}{% endif %}
+        {% endif %}
+        </td>
+        <td>{% if t.project %}{{ t.project }}{% endif %}</td>
+    </tr>
+    {% endfor %}
+    {% if not transactions %}<tr><td>Нет операций</td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td></tr>{% endif %}
+</table>
+<p></p>
+<a href="{{ return_url }}"><input type="button" value="Возврат"></a>
+{% endblock %}

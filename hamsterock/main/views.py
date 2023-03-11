@@ -3906,10 +3906,12 @@ def autoplanning_budget(request, budget_id, budget_year, return_url):
                                          planned_amount_base_cur_2=ftod(0.00, 2))
                                  )
 
+                        # Возьмем курс для дополнительной валюты на начало планируемого года
                         rate = CurrencyRate.get_rate(request.user.profile.budget.base_currency_2_id,
                                                      request.user.profile.budget.base_currency_1_id,
                                                      date(budget_year, 1, 1) - timedelta(days=1))
 
+                        # Будем изменять только январь или весь год в зависимости от выбора пользователя
                         if request.POST['plan_action'] == 'fill_january':
                             month_range = range(1, 2)
                         else:
@@ -3917,7 +3919,9 @@ def autoplanning_budget(request, budget_id, budget_year, return_url):
 
                         digit_rounding = request.user.profile.budget.digit_rounding
 
+                        # Заполнение плана для текущих доходов и расходов
                         if request.POST['types_for_planning'] in ['only_current', 'both']:
+                            # Возьмем бюджетные регистры за предыдущий год кроме курсовых разниц
                             actual_current_values = (BudgetRegister.objects
                                                      .values('category_id')
                                                      .annotate(actual_sum=Sum('actual_amount_base_cur_1'))
@@ -3928,11 +3932,15 @@ def autoplanning_budget(request, budget_id, budget_year, return_url):
                             for actual_current_value in actual_current_values:
                                 if actual_current_value.get('category_id') not in [POSITIVE_EXCHANGE_DIFFERENCE,
                                                                                    NEGATIVE_EXCHANGE_DIFFERENCE]:
+                                    # Считаем среднее для базовой валюты
                                     ac_val_1 = \
                                         balance_round(actual_current_value.get('actual_sum', 0) / months,
                                                       digit_rounding)
                                     if ac_val_1 != ftod(0.00, 2):
+                                        # Считаем среднее для дополнительной валюты
                                         ac_val_2 = ftod(ac_val_1 * rate, 2)
+                                        # Записываем плановые значения в бюджетные регистры планируемого года
+                                        # Если регистра нет, то создаем
                                         for month in month_range:
                                             br, created = \
                                                 (BudgetRegister.objects
@@ -3946,7 +3954,9 @@ def autoplanning_budget(request, budget_id, budget_year, return_url):
                                             br.planned_amount_base_cur_2 = ac_val_2
                                             br.save()
 
+                        # Заполнение плана для проектных доходов и расходов
                         if request.POST['types_for_planning'] in ['only_project', 'both']:
+                            # Возьмем бюджетные регистры за предыдущий год кроме курсовых разниц
                             actual_project_values = (BudgetRegister.objects
                                                      .values('category_id')
                                                      .annotate(actual_sum=Sum('actual_amount_base_cur_1'))
@@ -3956,10 +3966,14 @@ def autoplanning_budget(request, budget_id, budget_year, return_url):
                             for actual_project_value in actual_project_values:
                                 if actual_current_value.get('category_id') not in [POSITIVE_EXCHANGE_DIFFERENCE,
                                                                                    NEGATIVE_EXCHANGE_DIFFERENCE]:
+                                    # Считаем среднее для базовой валюты
                                     ac_val_1 = \
                                         balance_round(actual_project_value.get('actual_sum', 0) / months, digit_rounding)
                                     if ac_val_1 != ftod(0.00, 2):
+                                        # Считаем среднее для дополнительной валюты
                                         ac_val_2 = ftod(ac_val_1 * rate, 2)
+                                        # Записываем плановые значения в бюджетные регистры планируемого года
+                                        # Если регистра нет, то создаем
                                         for month in month_range:
                                             br, created = \
                                                 (BudgetRegister.objects
@@ -4000,6 +4014,7 @@ def autoplanning_budget(request, budget_id, budget_year, return_url):
                                          planned_amount_base_cur_2=ftod(0.00, 2))
                                  )
 
+                        # Берем плановые значения января (различные опции)
                         if request.POST['types_for_planning'] == 'only_current':
                             planned_values = BudgetRegister.objects.filter(budget_id=budget_id,
                                                                            budget_year=budget_year,
@@ -4020,6 +4035,8 @@ def autoplanning_budget(request, budget_id, budget_year, return_url):
                                 ac_val_1 = ftod(planned_value.planned_amount_base_cur_1, 2)
                                 if ac_val_1 != ftod(0.00, 2):
                                     ac_val_2 = ftod(planned_value.planned_amount_base_cur_2, 2)
+                                    # Записываем плановые значения в бюджетные регистры планируемого года
+                                    # Если регистра нет, то создаем
                                     for month in range(2, 13):
                                         if planned_value.project_id is None:
                                             br, created = \
@@ -4088,3 +4105,626 @@ def autoplanning_budget(request, budget_id, budget_year, return_url):
                                           'base_currency_selected': DEFAULT_BASE_CURRENCY_1,
                                           })
                   )
+
+
+@login_required
+def current_state(request, currency_id, month_shift):
+    """
+    Функция просмотра текущего состояния.
+    Показывает фактические остатки на счетах в разрезе валют и групп типов счетов/кошельков.
+    Показывает факт текущего месяца, план текущего месяца и его исполнение.
+    Также показывает факт предыдущих 12 месяцев и их среднее.
+    Для каждого фактического значения категорий второго уровня предусмотрена возможность
+    просмотреть список операций его составляющих.
+    Сделана возможность посмотреть текущее состояние не только на текущий месяц,
+    но и на месяц и более ранее (month_shift > 0)
+    """
+    if not request.user.is_authenticated:
+        return redirect('home')
+    if not (hasattr(request.user, 'profile') and request.user.profile.budget):
+        return redirect('home')
+    else:
+        budget_id = request.user.profile.budget_id
+
+    expanded_category_id = int(request.GET.get("cat_id", -1))
+
+    budget_base_currency_1 = request.user.profile.budget.base_currency_1_id
+
+    # Создаем массив из 13 месяцев (текущий - month_shift и 12 предыдущих)
+    months = []
+    d = datetime.utcnow()
+    d = datetime(d.year, d.month, 1, 0, 0, 0, 0, timezone.utc)
+    for m in range(month_shift):
+        d = d - timedelta(days=1)
+        d = datetime(d.year, d.month, 1, 0, 0, 0, 0, timezone.utc)
+    if month_shift == 0:
+        month_name = 'текущий '
+    elif month_shift == 1:
+        month_name = 'предыдущий '
+    else:
+        month_name = ''
+    month_name = month_name + str(d.year).zfill(4) + ' ' + str(d.month).zfill(2)
+    for m in range(13):
+        months.append((d.year, d.month))
+        d = d - timedelta(days=1)
+        d = datetime(d.year, d.month, 1, 0, 0, 0, 0, timezone.utc)
+
+    d = datetime(months[0][0], months[0][1], 28, 0, 0, 0, 0, timezone.utc) + timedelta(days=4)
+    months.reverse()
+    m_extra = (d.year, d.month)
+    months_extra = months.copy()
+    months_extra.append(m_extra)
+
+    # Это результирующий словарь бюджета
+    budget_items = dict()
+
+    # Добавляем пустой раздел 1 "Остатки на начало"
+    budget_items['opening_balance'] = \
+        {0: {'item': '1.',
+             'name': 'ОСТАТКИ НА НАЧАЛО',
+             'parent_parent_id': 0,
+             'parent_id': 0,
+             'is_empty': False,
+             'values': {m: {'actual_balance': ftod(0.00, 2)}
+                        for m in months}
+             }
+         }
+    budget_items['opening_balance'][0]['values']['summary'] = \
+        {'planned_balance': ftod(0.00, 2), 'actual_balance': ftod(0.00, 2),
+         'execution_percentage': ftod(0.0000, 4), 'average_balance': ftod(0.00, 2)}
+
+    # Добавляем категории счетов/кошельков из константы ACCOUNT_TYPES и сами счета/кошельки
+    n_type_category = 1
+    for account_type_category in ACCOUNT_TYPES[1:]:
+        budget_items['opening_balance'][account_type_category[0]] = \
+            {'item': '1.' + str(n_type_category) + '.',
+             'name': account_type_category[0],
+             'parent_parent_id': 0,
+             'parent_id': 0,
+             'is_empty': True,
+             'values': {m: {'actual_balance': ftod(0.00, 2)}
+                        for m in months}
+             }
+        budget_items['opening_balance'][account_type_category[0]]['values']['summary'] = \
+            {'planned_balance': ftod(0.00, 2), 'actual_balance': ftod(0.00, 2),
+             'execution_percentage': ftod(0.0000, 4), 'average_balance': ftod(0.00, 2)}
+        n_type = 1
+        for account_type in account_type_category[1]:
+            budget_items['opening_balance'][account_type[0]] = \
+                {'item': '1.' + str(n_type_category) + '.' + str(n_type) + '.',
+                 'name': account_type[1],
+                 'parent_parent_id': 0,
+                 'parent_id': account_type_category[0],
+                 'is_empty': True,
+                 'values': {m: {'actual_balance': ftod(0.00, 2)}
+                            for m in months}
+                 }
+            budget_items['opening_balance'][account_type[0]]['values']['summary'] = \
+                {'planned_balance': ftod(0.00, 2), 'actual_balance': ftod(0.00, 2),
+                 'execution_percentage': ftod(0.0000, 4), 'average_balance': ftod(0.00, 2)}
+            accounts = Account.objects.filter(budget_id=budget_id, type=account_type[0]).order_by('name')
+            n_account = 1
+            for account in accounts:
+                budget_items['opening_balance'][account.id] = \
+                    {'item': '1.' + str(n_type_category) + '.' + str(n_type) + '.' + str(n_account) + '.',
+                     'name': str(account),
+                     'parent_parent_id': account_type_category[0],
+                     'parent_id': account_type[0],
+                     'is_empty': True,
+                     'values': {m: {'actual_balance': ftod(0.00, 2)}
+                                for m in months}
+                     }
+                budget_items['opening_balance'][account.id]['values']['summary'] = \
+                    {'planned_balance': ftod(0.00, 2), 'actual_balance': ftod(0.00, 2),
+                     'execution_percentage': ftod(0.0000, 4), 'average_balance': ftod(0.00, 2)}
+                n_account += 1
+            n_type += 1
+        n_type_category += 1
+
+    # Добавляем пустой раздел 2 "Доходы" (результирующая строка со столбцами по месяцам и году в целом)
+    # Значения План/Факт/% исполнения представляется в трех разрезах: Общая сумма / Текущий приход / Проектный приход
+    budget_items['income_items'] = \
+        {0: {'item': '2.',
+             'name': 'ДОХОДЫ',
+             'parent_id': 0,
+             'is_empty': False,
+             'hidden_children': {},
+             'values': {m: {p: {'actual_value': ftod(0.00, 2)
+                                } for p in ['all', 'project', 'non_project']} for m in months}
+             }
+         }
+    budget_items['income_items'][0]['values']['summary'] = \
+        {p: {'planned_value': ftod(0.00, 2), 'actual_value': ftod(0.00, 2),
+             'execution_percentage': ftod(0.0000, 4), 'average_value': ftod(0.00, 2)
+             } for p in ['all', 'project', 'non_project']
+         }
+
+    # Дополняем раздел 2 "Доходы" категориями из справочника из базы данных
+    for cat, dic in tree_item_iterator(Category.objects.filter(type='INC')):
+        if not cat.budget or cat.budget.pk == budget_id:
+            try:
+                parent_id = cat.parent.id
+            except Exception as e:
+                parent_id = 0
+            budget_items['income_items'][cat.id] = \
+                {'item': '2.' + cat.item,
+                 'name': cat.name,
+                 'parent_id': parent_id,
+                 'is_empty': True,
+                 'hidden_children': {},
+                 'values': {}
+                 }
+
+    # Добавляем пустой раздел 3 "Расходы" (результирующая строка со столбцами по месяцам и году в целом)
+    # Значения План/Факт/% исполнения представляется в трех разрезах: Общая сумма / Текущий расход / Проектный расход
+    budget_items['expenditure_items'] = \
+        {0: {'item': '3.',
+             'name': 'РАСХОДЫ',
+             'parent_id': 0,
+             'is_empty': False,
+             'hidden_children': {},
+             'values': {m: {p: {'actual_value': ftod(0.00, 2)
+                                } for p in ['all', 'project', 'non_project']} for m in months}
+             }
+         }
+    budget_items['expenditure_items'][0]['values']['summary'] = \
+        {p: {'planned_value': ftod(0.00, 2), 'actual_value': ftod(0.00, 2),
+             'execution_percentage': ftod(0.0000, 4), 'average_value': ftod(0.00, 2)
+             } for p in ['all', 'project', 'non_project']
+         }
+
+    # Дополняем раздел 3 "Расходы" категориями из справочника из базы данных
+    for cat, dic in tree_item_iterator(Category.objects.filter(type='EXP')):
+        if not cat.budget or cat.budget.pk == budget_id:
+            try:
+                parent_id = cat.parent.id
+            except Exception as e:
+                parent_id = 0
+            budget_items['expenditure_items'][cat.id] = \
+                {'item': '3.' + cat.item,
+                 'name': cat.name,
+                 'parent_id': parent_id,
+                 'is_empty': True,
+                 'hidden_children': {},
+                 'values': {}
+                 }
+
+    # Добавляем пустой раздел 4 "Остатки на конец"
+    budget_items['closing_balance'] = \
+        {0: {'item': '4.',
+             'name': 'ОСТАТКИ НА КОНЕЦ',
+             'parent_parent_id': 0,
+             'parent_id': 0,
+             'is_empty': False,
+             'values': {m: {'actual_balance': ftod(0.00, 2)}
+                        for m in months}
+             }
+         }
+    budget_items['closing_balance'][0]['values']['summary'] = \
+        {'planned_balance': ftod(0.00, 2), 'actual_balance': ftod(0.00, 2),
+         'execution_percentage': ftod(0.0000, 4), 'average_balance': ftod(0.00, 2)}
+
+    # Добавляем категории счетов/кошельков из константы ACCOUNT_TYPES и сами счета/кошельки
+    n_type_category = 1
+    for account_type_category in ACCOUNT_TYPES[1:]:
+        budget_items['closing_balance'][account_type_category[0]] = \
+            {'item': '4.' + str(n_type_category) + '.',
+             'name': account_type_category[0],
+             'parent_parent_id': 0,
+             'parent_id': 0,
+             'is_empty': True,
+             'values': {m: {'actual_balance': ftod(0.00, 2)}
+                        for m in months}
+             }
+        budget_items['closing_balance'][account_type_category[0]]['values']['summary'] = \
+            {'planned_balance': ftod(0.00, 2), 'actual_balance': ftod(0.00, 2),
+             'execution_percentage': ftod(0.0000, 4), 'average_balance': ftod(0.00, 2)}
+        n_type = 1
+        for account_type in account_type_category[1]:
+            budget_items['closing_balance'][account_type[0]] = \
+                {'item': '4.' + str(n_type_category) + '.' + str(n_type) + '.',
+                 'name': account_type[1],
+                 'parent_parent_id': 0,
+                 'parent_id': account_type_category[0],
+                 'is_empty': True,
+                 'values': {m: {'actual_balance': ftod(0.00, 2)}
+                            for m in months}
+                 }
+            budget_items['closing_balance'][account_type[0]]['values']['summary'] = \
+                {'planned_balance': ftod(0.00, 2), 'actual_balance': ftod(0.00, 2),
+                 'execution_percentage': ftod(0.0000, 4), 'average_balance': ftod(0.00, 2)}
+            accounts = Account.objects.filter(budget_id=budget_id, type=account_type[0]).order_by('name')
+            n_account = 1
+            for account in accounts:
+                budget_items['closing_balance'][account.id] = \
+                    {'item': '4.' + str(n_type_category) + '.' + str(n_type) + '.' + str(n_account) + '.',
+                     'name': str(account),
+                     'parent_parent_id': account_type_category[0],
+                     'parent_id': account_type[0],
+                     'is_empty': True,
+                     'values': {m: {'actual_balance': ftod(0.00, 2)}
+                                for m in months}
+                     }
+                budget_items['closing_balance'][account.id]['values']['summary'] = \
+                    {'planned_balance': ftod(0.00, 2), 'actual_balance': ftod(0.00, 2),
+                     'execution_percentage': ftod(0.0000, 4), 'average_balance': ftod(0.00, 2)}
+                n_account += 1
+            n_type += 1
+        n_type_category += 1
+
+    # Добавляем пустой раздел 5 "Сальдо" (одна результирующая строка со столбцами по месяцам и году в целом)
+    budget_items['difference'] = \
+        {'item': '5.',
+         'name': 'САЛЬДО',
+         'values': {m: {p: {'actual_value': ftod(0.00, 2)
+                            } for p in ['all', 'project', 'non_project']} for m in months}
+         }
+    budget_items['difference']['values']['summary'] = \
+        {p: {'planned_value': ftod(0.00, 2), 'actual_value': ftod(0.00, 2),
+             'execution_percentage': ftod(0.0000, 4), 'average_value': ftod(0.00, 2)
+             } for p in ['all', 'project', 'non_project']
+         }
+
+    # Вытаскиваем из базы данных для заданного бюджета регистры заданного года
+    for year, month in months:
+        budget_registers = (BudgetRegister.objects
+                            .filter(budget_id=budget_id, budget_year=year, budget_month=month)
+                            .select_related('category', 'project'))
+
+        # Заполняем разделы 2 и 3 словаря данными из вытащенных регистров
+        for budget_register in budget_registers:
+            # Определяем приход или расход
+            idx_budget = 'income_items' if budget_register.category.type == 'INC' else 'expenditure_items'
+
+            # Определяем суммы исходя из валюты
+            actual_value = ftod(budget_register.actual_amount_base_cur_1, 2) \
+                if currency_id == budget_base_currency_1 \
+                else ftod(budget_register.actual_amount_base_cur_2, 2)
+            planned_value = ftod(budget_register.planned_amount_base_cur_1, 2) \
+                if currency_id == budget_base_currency_1 \
+                else ftod(budget_register.planned_amount_base_cur_2, 2)
+
+            # Если суммы нулевые, то не будем добавлять строчку в массив, кроме курсовых разниц
+            if budget_register.category_id not in [POSITIVE_EXCHANGE_DIFFERENCE, NEGATIVE_EXCHANGE_DIFFERENCE] and \
+                    planned_value == ftod(0.00, 2) and actual_value == ftod(0.00, 2):
+                continue
+
+            # Для расходов снесем минуса для приятности глаз токмо
+            if budget_register.category.type == 'EXP':
+                actual_value = -actual_value
+                planned_value = -planned_value
+
+            category = budget_register.category_id
+            parent_category = budget_register.category.parent_id
+            project = budget_register.project
+
+            # Проставим флаг заполненности категории
+            budget_items[idx_budget][category]['is_empty'] = False
+            budget_items[idx_budget][parent_category]['is_empty'] = False
+
+            # Если по категории массив со значениями пустой, то задефолтим
+            if not budget_items[idx_budget][category]['values']:
+                budget_items[idx_budget][category]['values'] = \
+                    {m: {p: {'actual_value': ftod(0.00, 2)
+                             } for p in ['all', 'project', 'non_project']} for m in months}
+                budget_items[idx_budget][category]['values']['summary'] = \
+                    {p: {'planned_value': ftod(0.00, 2), 'actual_value': ftod(0.00, 2),
+                         'execution_percentage': ftod(0.0000, 4), 'average_value': ftod(0.00, 2)
+                         } for p in ['all', 'project', 'non_project']
+                     }
+
+            # Если по родительской категории массив со значениями пустой, то задефолтим
+            if not budget_items[idx_budget][parent_category]['values']:
+                budget_items[idx_budget][parent_category]['values'] = \
+                     {m: {p: {'actual_value': ftod(0.00, 2)
+                              } for p in ['all', 'project', 'non_project']} for m in months}
+                budget_items[idx_budget][parent_category]['values']['summary'] = \
+                    {p: {'planned_value': ftod(0.00, 2), 'actual_value': ftod(0.00, 2),
+                         'execution_percentage': ftod(0.0000, 4), 'average_value': ftod(0.00, 2)
+                         } for p in ['all', 'project', 'non_project']
+                     }
+
+            # Перебор по Регистрам /Категория (категория регистра, родительская категория, приход или расход в целом)
+            for c in [category, parent_category, 0]:
+                # Перебор по Регистрам /Месяц или Год (месяц регистра или год в целом)
+
+                # Регистр /общая сумма
+                budget_items[idx_budget][c]['values'][(year, month)]['all']['actual_value'] += actual_value
+                if (year, month) == months[len(months) - 1]:
+                    budget_items[idx_budget][c]['values']['summary']['all']['planned_value'] += planned_value
+                else:
+                    budget_items[idx_budget][c]['values']['summary']['all']['actual_value'] += actual_value
+
+                # Регистр /текущие или проектные
+                if project:
+                    budget_items[idx_budget][c]['values'][(year, month)]['project']['actual_value'] += actual_value
+                    if (year, month) == months[len(months) - 1]:
+                        budget_items[idx_budget][c]['values']['summary']['project']['planned_value'] += planned_value
+                    else:
+                        budget_items[idx_budget][c]['values']['summary']['project']['actual_value'] += actual_value
+                    if project.id:
+                        if not budget_items[idx_budget][c]['values'][(year, month)].get('projects', None):
+                            budget_items[idx_budget][c]['values'][(year, month)]['projects'] = {}
+                        if not budget_items[idx_budget][c]['values'][(year, month)]['projects'].get(project.id, None):
+                            budget_items[idx_budget][c]['values'][(year, month)]['projects'][project.id] = \
+                                {'name': project.name, 'actual_value': actual_value}
+                        else:
+                            budget_items[idx_budget][c]['values'][(year, month)]['projects'][project.id]['actual_value'] += \
+                                actual_value
+                else:
+                    budget_items[idx_budget][c]['values'][(year, month)]['non_project']['actual_value'] += actual_value
+                    if (year, month) == months[len(months) - 1]:
+                        budget_items[idx_budget][c]['values']['summary']['non_project']['planned_value'] += \
+                            planned_value
+                    else:
+                        budget_items[idx_budget][c]['values']['summary']['non_project']['actual_value'] += actual_value
+
+    # Снесем категории с пустыми массивами значений. Родительские категории не трогаем
+    for idx_budget in ['income_items', 'expenditure_items']:
+        for key in list(budget_items[idx_budget].keys()):
+            if not budget_items[idx_budget][key]['values']:
+                parent_category_id = budget_items[idx_budget][key]['parent_id']
+                if parent_category_id:
+                    budget_items[idx_budget].pop(key, None)
+                else:
+                    budget_items[idx_budget][key]['values'] = \
+                        {m: {p: {'actual_value': ftod(0.00, 2)
+                                 } for p in ['all', 'project', 'non_project']} for m in months}
+                    budget_items[idx_budget][key]['values']['summary'] = \
+                        {p: {'planned_value': ftod(0.00, 2), 'actual_value': ftod(0.00, 2),
+                             'execution_percentage': ftod(0.0000, 4), 'average_value': ftod(0.00, 2)
+                             } for p in ['all', 'project', 'non_project']
+                         }
+
+    # Посчитаем для разделов 2 и 3 исполнение последнего месяца и среднее месячное
+    for idx_budget in ['income_items', 'expenditure_items']:
+        for key in budget_items[idx_budget].keys():
+            for p in ['all', 'project', 'non_project']:
+                budget_items[idx_budget][key]['values']['summary'][p]['execution_percentage'] = \
+                    get_execution_percentage(budget_items[idx_budget][key]['values']['summary'][p]['planned_value'],
+                                             budget_items[idx_budget][key]['values'][months[len(months) - 1]][p]['actual_value'])
+                budget_items[idx_budget][key]['values']['summary'][p]['average_value'] = \
+                    ftod(budget_items[idx_budget][key]['values']['summary'][p]['actual_value'] / (len(months) - 1), 2)
+
+    # Посчитаем раздел 5 Сальдо
+    for m in months:
+        for p in ['all', 'project', 'non_project']:
+            budget_items['difference']['values'][m][p]['actual_value'] = \
+                budget_items['income_items'][0]['values'][m][p]['actual_value'] - \
+                budget_items['expenditure_items'][0]['values'][m][p]['actual_value']
+
+    for p in ['all', 'project', 'non_project']:
+        budget_items['difference']['values']['summary'][p]['planned_value'] = \
+            budget_items['income_items'][0]['values']['summary'][p]['planned_value'] - \
+            budget_items['expenditure_items'][0]['values']['summary'][p]['planned_value']
+        budget_items['difference']['values']['summary'][p]['actual_value'] = \
+            budget_items['income_items'][0]['values']['summary'][p]['actual_value'] - \
+            budget_items['expenditure_items'][0]['values']['summary'][p]['actual_value']
+        budget_items['difference']['values']['summary'][p]['execution_percentage'] = \
+            get_execution_percentage(budget_items['difference']['values']['summary'][p]['planned_value'],
+                                     budget_items['difference']['values']['summary'][p]['actual_value'])
+        budget_items['difference']['values']['summary'][p]['average_value'] = \
+            ftod(budget_items['difference']['values']['summary'][p]['actual_value'] / len(months) - 1, 2)
+
+    # Посчитаем разделы 1 и 4 Остатки на начало и конец - фактические остатки
+    accounts = Account.objects.filter(budget_id=budget_id).order_by('name')
+    for account in accounts:
+        parent_id = budget_items['opening_balance'][account.id]['parent_id']
+        parent_parent_id = budget_items['opening_balance'][account.id]['parent_parent_id']
+
+        m_prev = None
+        for m in months_extra:
+            # Определяем дату получения остатка
+            on_date = datetime(m[0], m[1], 1, 0, 0, 0, 0, timezone.utc)
+
+            # Получаем кортеж остатков
+            balance_base_cur_1, balance_base_cur_2 = account.get_budget_balance_on_date(on_date)
+
+            # Берем остаток нужной валюты
+            actual_balance = ftod(balance_base_cur_1, 2) if currency_id == budget_base_currency_1 \
+                else ftod(balance_base_cur_2, 2)
+
+            # Снесем флаг незаполненности, если остаток не пуст
+            if actual_balance:
+                budget_items['opening_balance'][account.id]['is_empty'] = False
+                budget_items['opening_balance'][parent_id]['is_empty'] = False
+                budget_items['opening_balance'][parent_parent_id]['is_empty'] = False
+                budget_items['closing_balance'][account.id]['is_empty'] = False
+                budget_items['closing_balance'][parent_id]['is_empty'] = False
+                budget_items['closing_balance'][parent_parent_id]['is_empty'] = False
+
+            # Сохраняем в массив
+            if m != months_extra[len(months_extra) - 1]:
+                budget_items['opening_balance'][account.id]['values'][m]['actual_balance'] = \
+                    ftod(actual_balance, 2)
+                budget_items['opening_balance'][parent_id]['values'][m]['actual_balance'] += \
+                    ftod(actual_balance, 2)
+                budget_items['opening_balance'][parent_parent_id]['values'][m]['actual_balance'] += \
+                    ftod(actual_balance, 2)
+                budget_items['opening_balance'][0]['values'][m]['actual_balance'] += \
+                    ftod(actual_balance, 2)
+            if m_prev:
+                budget_items['closing_balance'][account.id]['values'][m_prev]['actual_balance'] = \
+                    ftod(actual_balance, 2)
+                budget_items['closing_balance'][parent_id]['values'][m_prev]['actual_balance'] += \
+                    ftod(actual_balance, 2)
+                budget_items['closing_balance'][parent_parent_id]['values'][m_prev]['actual_balance'] += \
+                    ftod(actual_balance, 2)
+                budget_items['closing_balance'][0]['values'][m_prev]['actual_balance'] += \
+                    ftod(actual_balance, 2)
+
+            m_prev = m
+
+    # Посчитаем разделы 1 и 4 Остатки на начало и конец - Плановые остатки
+    # заполним остаток на начало последнего месяца
+    budget_items['opening_balance'][0]['values']['summary']['planned_balance'] = \
+        balance_round(budget_items['opening_balance'][0]['values'][months[len(months) - 1]]['actual_balance'],
+                      request.user.profile.budget.digit_rounding)
+    # заполним остаток на конец последнего месяца
+    budget_items['closing_balance'][0]['values']['summary']['planned_balance'] = \
+        budget_items['opening_balance'][0]['values']['summary']['planned_balance'] + \
+        budget_items['difference']['values']['summary']['all']['planned_value']
+
+    # Снесем категории и счета/кошельки с пустыми балансами
+    for key in list(budget_items['opening_balance'].keys()):
+        if budget_items['opening_balance'][key]['is_empty']:
+            budget_items['opening_balance'].pop(key, None)
+    for key in list(budget_items['closing_balance'].keys()):
+        if budget_items['closing_balance'][key]['is_empty']:
+            budget_items['closing_balance'].pop(key, None)
+
+    try:
+        currency_iso_code = Currency.objects.get(pk=currency_id).iso_code
+    except Exception as e:
+        currency_iso_code = ''
+
+    # Вытащим остатки по счетам, сгруппированные по валютам и группам счетов
+    balances_by_currencies = (Account.objects
+                              .values('currency_id', 'group')
+                              .annotate(balance_sum=Sum('balance'),
+                                        credit_limit_sum=Sum('credit_limit'),
+                                        balance_base_cur_1_sum=Sum('balance_base_cur_1'),
+                                        balance_base_cur_2_sum=Sum('balance_base_cur_2'),
+                                        )
+                              .filter(budget_id=request.user.profile.budget.pk)
+                              .values('currency_id', 'group', 'balance_sum', 'credit_limit_sum',
+                                      'balance_base_cur_1_sum', 'balance_base_cur_2_sum')
+                              .order_by('currency_id', 'group')
+                              )
+
+    # Итоговый массив остатков
+    balance_items = {}
+
+    # Заполним массив данными из выборки
+    for balance_by_currencies in balances_by_currencies:
+        if not balance_items.get(balance_by_currencies.get('currency_id')):
+            currency = Currency.objects.get(pk=balance_by_currencies.get('currency_id'))
+            balance_items[balance_by_currencies.get('currency_id')] = {
+                'currency_name': str(currency),
+                'currency_iso_code': currency.iso_code,
+                'values': {
+                    '1.CASH':
+                        {'balance': ftod(0.00, 2), 'credit_limit': ftod(0.00, 2), 'balance_base_cur': ftod(0.00, 2)},
+                    '2.CURR':
+                        {'balance': ftod(0.00, 2), 'credit_limit': ftod(0.00, 2), 'balance_base_cur': ftod(0.00, 2)},
+                    '3.CRED':
+                        {'balance': ftod(0.00, 2), 'credit_limit': ftod(0.00, 2), 'balance_base_cur': ftod(0.00, 2)},
+                    '4.DEBT':
+                        {'balance': ftod(0.00, 2), 'credit_limit': ftod(0.00, 2), 'balance_base_cur': ftod(0.00, 2)},
+                    '5.INVS':
+                        {'balance': ftod(0.00, 2), 'credit_limit': ftod(0.00, 2), 'balance_base_cur': ftod(0.00, 2)},
+                    '6.BUSN':
+                        {'balance': ftod(0.00, 2), 'credit_limit': ftod(0.00, 2), 'balance_base_cur': ftod(0.00, 2)},
+                    'TOTAL':
+                        {'balance': ftod(0.00, 2), 'credit_limit': ftod(0.00, 2), 'total': ftod(0.00, 2),
+                         'balance_base_cur': ftod(0.00, 2), 'credit_limit_base_cur': ftod(0.00, 2),
+                         'total_base_cur': ftod(0.00, 2)},
+                }
+            }
+        balance_items[balance_by_currencies.get('currency_id')]['values'][balance_by_currencies.get('group')]['balance'] += \
+            balance_by_currencies.get('balance_sum')
+        balance_items[balance_by_currencies.get('currency_id')]['values'][balance_by_currencies.get('group')]['credit_limit'] += \
+            balance_by_currencies.get('credit_limit_sum')
+        balance_items[balance_by_currencies.get('currency_id')]['values'][balance_by_currencies.get('group')]['balance_base_cur'] += \
+            ftod(balance_by_currencies.get('balance_base_cur_1_sum'), 2) if currency_id == budget_base_currency_1 \
+            else ftod(balance_by_currencies.get('balance_base_cur_2_sum'), 2)
+        balance_items[balance_by_currencies.get('currency_id')]['values']['TOTAL']['balance'] += \
+            balance_by_currencies.get('balance_sum')
+        balance_items[balance_by_currencies.get('currency_id')]['values']['TOTAL']['credit_limit'] += \
+            balance_by_currencies.get('credit_limit_sum')
+        balance_items[balance_by_currencies.get('currency_id')]['values']['TOTAL']['balance_base_cur'] += \
+            ftod(balance_by_currencies.get('balance_base_cur_1_sum'), 2) if currency_id == budget_base_currency_1 \
+            else ftod(balance_by_currencies.get('balance_base_cur_2_sum'), 2)
+
+    # Дозаполним итоги и три суммы
+    balance_totals = {'balance_base_cur': ftod(0.00, 2), 'credit_limit_base_cur': ftod(0.00, 2),
+                      'total_base_cur': ftod(0.00, 2)}
+    for cur_id, cur_dict in balance_items.items():
+        cur_dict['values']['TOTAL']['total'] = \
+            ftod(cur_dict['values']['TOTAL']['balance'] +
+                 cur_dict['values']['TOTAL']['credit_limit'], 2)
+        cur_dict['values']['TOTAL']['credit_limit_base_cur'] = \
+            ftod(cur_dict['values']['TOTAL']['credit_limit'] *
+                 CurrencyRate.get_rate(cur_id, currency_id, datetime.utcnow()), 2)
+        cur_dict['values']['TOTAL']['total_base_cur'] = \
+            ftod(cur_dict['values']['TOTAL']['balance_base_cur'] +
+                 cur_dict['values']['TOTAL']['credit_limit_base_cur'], 2)
+        balance_totals['balance_base_cur'] += cur_dict['values']['TOTAL']['balance_base_cur']
+        balance_totals['credit_limit_base_cur'] += cur_dict['values']['TOTAL']['credit_limit_base_cur']
+        balance_totals['total_base_cur'] += cur_dict['values']['TOTAL']['total_base_cur']
+
+    return render(request, 'main/budget_current_state.html',
+                  get_u_context(request, {'title': 'Текущее состояние: ' + request.user.profile.budget.name +
+                                                   ', месяц: ' + month_name + ' в ' + currency_iso_code,
+                                          'budget_items': budget_items,
+                                          'budget_id': budget_id,
+                                          'balance_items': balance_items,
+                                          'balance_totals': balance_totals,
+                                          'currency_iso_code': currency_iso_code,
+                                          'months': months,
+                                          'ped_cat': POSITIVE_EXCHANGE_DIFFERENCE,
+                                          'ned_cat': NEGATIVE_EXCHANGE_DIFFERENCE,
+                                          'work_menu': True,
+                                          'selected_menu': 'current_state',
+                                          'base_currency_selected': currency_id,
+                                          'month_shift_selected': month_shift,
+                                          'expanded_category_id': expanded_category_id,
+                                          'dir_dict': {2: 'inc', 3: 'exp'}
+                                          }))
+
+
+class AccountTransactionsInCategoryPeriod(LoginRequiredMixin, DataMixin, ListView):
+    """
+    Просмотр операций, лежащих в основе факта бюджета конкретных: года, месяца, категории
+    """
+    model = Transaction
+    template_name = 'main/account_transactions_in_category_period.html'
+    context_object_name = 'transactions'
+    allow_empty = True
+
+    def get_context_data(self, *, object_list=None, **kwargs):
+        context = super().get_context_data(**kwargs)
+        category = get_object_or_404(Category, pk=self.kwargs['category_id'])
+        year = self.kwargs['year']
+        month = self.kwargs['month']
+        currency = get_object_or_404(Currency, pk=self.kwargs['currency_id'])
+        if currency.id == DEFAULT_BASE_CURRENCY_2:
+            num_base_currency = 2
+        else:
+            num_base_currency = 1
+        return_url = self.kwargs['return_url']
+        if return_url[0:1] != '/':
+            return_url = '/' + return_url
+        c_def = self.get_user_context(title='Операции с категорией - ' + str(category.name) + ' в периоде ' +
+                                            str(year).zfill(4) + ' ' + str(month).zfill(2) + ' в ' + currency.iso_code,
+                                      category=category,
+                                      currency_iso=currency.iso_code,
+                                      num_base_currency=num_base_currency,
+                                      year=year,
+                                      month=month,
+                                      work_menu=True,
+                                      selected_menu='current_state',
+                                      return_url=return_url)
+        return dict(list(context.items()) + list(c_def.items()))
+
+    def dispatch(self, request, *args, **kwargs):
+        category_id = self.kwargs['category_id']
+        year = self.kwargs['year']
+        month = self.kwargs['month']
+        budget_id = self.kwargs['budget_id']
+        if request.user.is_authenticated:
+            if not (hasattr(request.user, 'profile') and request.user.profile.budget):
+                return redirect('home')
+            if budget_id != request.user.profile.budget.pk:
+                return self.handle_no_permission()
+
+        self.queryset = (Transaction.objects
+                         .distinct()
+                         .filter(budget_id=budget_id,
+                                 budget_year=year,
+                                 budget_month=month,
+                                 transaction_categories__category__id=category_id
+                                 )
+                         .order_by('-time_transaction')
+                         .select_related('budget', 'account', 'currency', 'sender'))
+        return super(AccountTransactionsInCategoryPeriod, self).dispatch(request, *args, **kwargs)

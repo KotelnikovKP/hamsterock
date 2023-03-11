@@ -54,4 +54,8 @@ urlpatterns = [
     path('edit_budget_register/', edit_budget_register, name='edit_budget_register'),
     path('autoplanning_budget/<int:budget_id>/<int:budget_year>/<path:return_url>/', autoplanning_budget,
          name='autoplanning_budget'),
+    path('current_state/<int:currency_id>/<int:month_shift>/', current_state, name='current_state'),
+    path('account_transactions_in_category_period/'
+         '<int:budget_id>/<int:category_id>/<int:year>/<int:month>/<int:currency_id>/<path:return_url>/',
+         AccountTransactionsInCategoryPeriod.as_view(), name='account_transactions_in_category_period'),
 ]

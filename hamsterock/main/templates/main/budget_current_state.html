@@ -1,0 +1,414 @@
+{% extends 'main/base.html' %}
+{% load main_tags %}
+{% load static %}
+
+{% block scripts %}
+<script>
+
+function expand_children_balance(t) {
+    const elsT = document.querySelectorAll('tr[id^="' + t.parentNode.parentNode.id + '-"]');
+    elp_id = t.parentNode.parentNode.dataset.id;
+    for (let el of elsT) {
+        if (el.dataset.parentid == elp_id) {
+            el.style.display = "";
+        }
+    }
+    t.style.display = "none";
+    at = document.querySelector('[id="' + t.parentNode.parentNode.id + 'c"]');
+    at.style.display = "";
+}
+
+function close_children_balance(t) {
+    const elsT = document.querySelectorAll('tr[id^="' + t.parentNode.parentNode.id + '-"]');
+    let elp_id = t.parentNode.parentNode.dataset.id;
+    for (let el of elsT) {
+        if (el.dataset.parentid == elp_id) {
+            if (el.dataset.parentparentid == '0') {
+                close_children_balance(document.querySelector('[id="' + el.id + 'c"]'));
+            }
+            el.style.display = "none";
+        }
+    }
+    t.style.display = "none";
+    at = document.querySelector('[id="' + t.parentNode.parentNode.id + 'e"]');
+    at.style.display = "";
+}
+
+function expand_children_category(t) {
+    const elsT = document.querySelectorAll('tr[id^="' + t.parentNode.parentNode.id + '-"]');
+    for (let el of elsT) {
+        if (el.id.substr(-1) != 'p' && el.dataset.isempty != 'True') {
+            el.style.display = "";
+        }
+    }
+    t.style.display = "none";
+    at = document.querySelector('[id="' + t.parentNode.parentNode.id + 'psel"]');
+    if ( at ) {
+        at.style.display = "none";
+    }
+    at = document.querySelector('[id="' + t.parentNode.parentNode.id + 'sel"]');
+    if ( at ) {
+        at.style.display = "";
+    }
+    at = document.querySelector('[id="' + t.parentNode.parentNode.id + 'c"]');
+    at.style.display = "";
+}
+
+function close_children_category(t) {
+    const elsT = document.querySelectorAll('tr[id^="' + t.parentNode.parentNode.id + '-"]');
+    for (let el of elsT) {
+        el.style.display = "none";
+        if (el.id.substr(-1) != 'p') {
+            at = document.querySelector('[id="' + el.id + 'ee"]');
+            at.style.display = "";
+            at = document.querySelector('[id="' + el.id + 'cc"]');
+            at.style.display = "none";
+        }
+    }
+    el = document.querySelector('[id="' + t.parentNode.parentNode.id + 'np"]');
+    el.style.display = "none";
+    el = document.querySelector('[id="' + t.parentNode.parentNode.id + 'p"]');
+    el.style.display = "none";
+    at = document.querySelector('[id="' + t.parentNode.parentNode.id + 'cc"]');
+    at.style.display = "none";
+    at = document.querySelector('[id="' + t.parentNode.parentNode.id + 'ee"]');
+    at.style.display = "";
+    at = document.querySelector('[id="' + t.parentNode.parentNode.id + 'psel"]');
+    if ( at ) {
+        at.style.display = "none";
+    }
+    at = document.querySelector('[id="' + t.parentNode.parentNode.id + 'sel"]');
+    if ( at ) {
+        at.style.display = "none";
+    }
+    t.style.display = "none";
+    at = document.querySelector('[id="' + t.parentNode.parentNode.id + 'e"]');
+    at.style.display = "";
+}
+
+function expand_children_item(t) {
+    el = document.querySelector('[id="' + t.parentNode.parentNode.id + 'np"]');
+    el.style.display = "";
+    el = document.querySelector('[id="' + t.parentNode.parentNode.id + 'p"]');
+    el.style.display = "";
+    t.style.display = "none";
+    at = document.querySelector('[id="' + t.parentNode.parentNode.id + 'cc"]');
+    at.style.display = "";
+}
+
+function close_children_item(t) {
+    el = document.querySelector('[id="' + t.parentNode.parentNode.id + 'np"]');
+    el.style.display = "none";
+    el = document.querySelector('[id="' + t.parentNode.parentNode.id + 'p"]');
+    el.style.display = "none";
+    t.style.display = "none";
+    at = document.querySelector('[id="' + t.parentNode.parentNode.id + 'ee"]');
+    at.style.display = "";
+}
+
+function expand_project(t) {
+    el = document.querySelector('[id="' + t.id.slice(0,t.id.length-1) + 'p"]');
+    el.style.display = "";
+    t.style.display = "none";
+    at = document.querySelector('[id="' + t.id.slice(0,t.id.length-1) + 'c"]');
+    at.style.display = "";
+}
+
+function close_project(t) {
+    el = document.querySelector('[id="' + t.id.slice(0,t.id.length-1) + 'p"]');
+    el.style.display = "none";
+    t.style.display = "none";
+    at = document.querySelector('[id="' + t.id.slice(0,t.id.length-1) + 'e"]');
+    at.style.display = "";
+}
+
+</script>
+{% endblock %}
+
+{% block content %}
+<h1>{{title}}</h1>
+<p style="margin: 10px 0px 0px 0px;"><strong>ТЕКУЩИЕ ОСТАТКИ:</strong></p>
+<table class="table-current-balance">
+    <tr>
+        <th>ВАЛЮТА</th>
+        <th>НАЛИЧНЫЕ</th>
+        <th>СЧЕТА/КАРТЫ</th>
+        <th>КРЕДИТКИ</th>
+        <th>ВКЛАДЫ</th>
+        <th>ИНВЕСТИЦИИ</th>
+        <th>БИЗНЕС</th>
+        <th>ИТОГО</th>
+        <th>КРЕД.ЛИМИТ</th>
+        <th>ДОСТУПНО</th>
+        <th>ИТОГО ({{ currency_iso_code }})</th>
+        <th>КРЕД.ЛИМИТ ({{ currency_iso_code }})</th>
+        <th>ДОСТУПНО ({{ currency_iso_code }})</th>
+    </tr>
+    {% for cur_id, cur_dict in balance_items.items %}
+        {% get_value_from_dict cur_dict 'currency_name' as cur_name %}
+        {% get_value_from_dict cur_dict 'currency_iso_code' as cur_iso %}
+        {% get_value_from_dict cur_dict 'values' '1.CASH' 'balance' as bal_cash %}
+        {% get_value_from_dict cur_dict 'values' '2.CURR' 'balance' as bal_curr %}
+        {% get_value_from_dict cur_dict 'values' '3.CRED' 'balance' as bal_cred %}
+        {% get_value_from_dict cur_dict 'values' '4.DEBT' 'balance' as bal_debt %}
+        {% get_value_from_dict cur_dict 'values' '5.INVS' 'balance' as bal_invs %}
+        {% get_value_from_dict cur_dict 'values' '6.BUSN' 'balance' as bal_busn %}
+        {% get_value_from_dict cur_dict 'values' 'TOTAL' 'balance' as tot_bal %}
+        {% get_value_from_dict cur_dict 'values' 'TOTAL' 'credit_limit' as tot_cre_lim %}
+        {% get_value_from_dict cur_dict 'values' 'TOTAL' 'total' as tot_tot %}
+        {% get_value_from_dict cur_dict 'values' 'TOTAL' 'balance_base_cur' as tot_bal_bas %}
+        {% get_value_from_dict cur_dict 'values' 'TOTAL' 'credit_limit_base_cur' as tot_cre_lim_bas %}
+        {% get_value_from_dict cur_dict 'values' 'TOTAL' 'total_base_cur' as tot_tot_bas %}
+    <tr>
+        <td>{% autoescape off %}{% strong_str cur_name %}{% endautoescape %}</td>
+        <td>{{ bal_cash|floatformat:"2g" }}</td>
+        <td>{{ bal_curr|floatformat:"2g" }}</td>
+        <td>{{ bal_cred|floatformat:"2g" }}</td>
+        <td>{{ bal_debt|floatformat:"2g" }}</td>
+        <td>{{ bal_invs|floatformat:"2g" }}</td>
+        <td>{{ bal_busn|floatformat:"2g" }}</td>
+        <td>{{ tot_bal|floatformat:"2g" }}</td>
+        <td>{{ tot_cre_lim|floatformat:"2g" }}</td>
+        <td>{{ tot_tot|floatformat:"2g" }}</td>
+        <td>{{ tot_bal_bas|floatformat:"2g" }}</td>
+        <td>{{ tot_cre_lim_bas|floatformat:"2g" }}</td>
+        <td>{{ tot_tot_bas|floatformat:"2g" }}</td>
+    </tr>
+    {% endfor %}
+    {% get_value_from_dict balance_totals 'balance_base_cur' as tot_bal_bas %}
+    {% get_value_from_dict balance_totals 'credit_limit_base_cur' as tot_cre_lim_bas %}
+    {% get_value_from_dict balance_totals 'total_base_cur' as tot_tot_bas %}
+    <tr class="total">
+        <td>ИТОГО&nbsp;({{ currency_iso_code }})</td>
+        <td></td>
+        <td></td>
+        <td></td>
+        <td></td>
+        <td></td>
+        <td></td>
+        <td></td>
+        <td></td>
+        <td></td>
+        <td>{{ tot_bal_bas|floatformat:"2g" }}</td>
+        <td>{{ tot_cre_lim_bas|floatformat:"2g" }}</td>
+        <td>{{ tot_tot_bas|floatformat:"2g" }}</td>
+    </tr>
+</table>
+<p style="margin: 10px 0px 0px 0px;"><strong>ФАКТ ПОСЛЕДНИХ 13 МЕСЯЦЕВ:</strong></p>
+<table class="table-current-state">
+    <tr>
+        <th> </th>
+        <th>№</th>
+        <th> </th>
+        <th>СТАТЬЯ</th>
+        {% for y, m in months %}
+        <th> </th>
+        {% getperiod y m as p %}<th>{% autoescape off %}{% strong_str p %}{% endautoescape %}</th>
+        {% endfor %}
+        <th>ПЛАН</th>
+        <th>%&nbsp;ИСП</th>
+        <th>СРЕДНЕЕ</th>
+    </tr>
+    {% get_value_from_dict budget_items 'opening_balance' as balance_items %}
+    {% for bal_id, bal_dict in balance_items.items %}
+        {% get_value_from_dict bal_dict 'item' as bal_item %}
+        {% get_value_from_dict bal_dict 'name' as bal_name %}
+        {% get_value_from_dict bal_dict 'parent_parent_id' as bal_parent_parent_id %}
+        {% get_value_from_dict bal_dict 'parent_id' as bal_parent_id %}
+        {% get_value_from_dict bal_dict 'is_empty' as bal_is_empty %}
+        {% get_value_from_dict bal_dict 'values' as bal_values %}
+        {% get_value_from_dict bal_values 'summary' 'planned_balance' as bal_summary_planned_balance %}
+        {% get_bal_node_id 'opening_balance' bal_id bal_parent_id bal_parent_parent_id as bal_node_id %}
+    <tr id="{{ bal_node_id }}" class="{% if bal_parent_parent_id %}lvl4{% elif bal_parent_id %}lvl3{% elif bal_id %}lvl2{% else %}lvl1{% endif %}" style="{% if bal_id or bal_is_empty %}display:none;{% endif %}" data-id="{{ bal_id }}" data-parentid="{{ bal_parent_id }}" data-parentparentid="{{ bal_parent_parent_id }}">
+        <td>{% if not bal_parent_parent_id %}<img id="{{ bal_node_id }}e" {% if bal_parent_id %}src="{% static 'main/images/tr-right-3.png' %}"{% elif bal_id %}src="{% static 'main/images/tr-right-2.png' %}"{% else %}src="{% static 'main/images/tr-right.png' %}"{% endif %} style="max-height:8px;" onclick="expand_children_balance(this)"><img id="{{ bal_node_id }}c" {% if bal_parent_id %}src="{% static 'main/images/tr-down-3.png' %}"{% elif bal_id %}src="{% static 'main/images/tr-down-2.png' %}"{% else %}src="{% static 'main/images/tr-down.png' %}"{% endif %} style="max-height:8px; display:none;" onclick="close_children_balance(this)">{% endif %}</td>
+        <td>{{ bal_item }}</td>
+        <td></td>
+        <td>{% autoescape off %}{% strong_str bal_name %}{% endautoescape %}</td>
+        {% for m in months %}
+            {% get_value_from_dict bal_values m 'actual_balance' as bal_month_actual_balance %}
+        <td></td>
+        <td id="{{ bal_node_id }}-actual-{{ m }}" data-val="{{ bal_month_actual_balance }}" data-month="{{ m }}">{{ bal_month_actual_balance|floatformat:"2g" }}</td>
+        {% endfor %}
+        <td>{{ bal_summary_planned_balance|floatformat:"2g" }}</td>
+        <td></td>
+        <td></td>
+    </tr>
+    {% endfor %}
+
+    {% for d, dir in dir_dict.items %}
+        {% if dir == 'inc' %} 
+            {% get_value_from_dict budget_items 'income_items' as b_items %}
+        {% else %}
+            {% get_value_from_dict budget_items 'expenditure_items' as b_items %}
+        {% endif %}
+        {% for cat_id, cat_dict in b_items.items %}
+            {% get_value_from_dict cat_dict 'item' as cat_item %}
+            {% get_value_from_dict cat_dict 'name' as cat_name %}
+            {% get_value_from_dict cat_dict 'parent_id' as cat_parent_id %}
+            {% get_value_from_dict cat_dict 'is_empty' as cat_is_empty %}
+            {% get_value_from_dict cat_dict 'values' as cat_values %}
+            {% get_value_from_dict cat_values 'summary' 'all' 'planned_value' as cat_summary_all_planned_value %}
+            {% get_value_from_dict cat_values 'summary' 'all' 'actual_value' as cat_summary_all_actual_value %}
+            {% get_value_from_dict cat_values 'summary' 'all' 'execution_percentage' as cat_summary_all_execution_percentage %}
+            {% get_value_from_dict cat_values 'summary' 'all' 'average_value' as cat_summary_all_average_value %}
+            {% get_value_from_dict cat_values 'summary' 'non_project' 'planned_value' as cat_summary_non_project_planned_value %}
+            {% get_value_from_dict cat_values 'summary' 'non_project' 'actual_value' as cat_summary_non_project_actual_value %}
+            {% get_value_from_dict cat_values 'summary' 'non_project' 'execution_percentage' as cat_summary_non_project_execution_percentage %}
+            {% get_value_from_dict cat_values 'summary' 'non_project' 'average_value' as cat_summary_non_project_average_value %}
+            {% get_value_from_dict cat_values 'summary' 'project' 'planned_value' as cat_summary_project_planned_value %}
+            {% get_value_from_dict cat_values 'summary' 'project' 'actual_value' as cat_summary_project_actual_value %}
+            {% get_value_from_dict cat_values 'summary' 'project' 'execution_percentage' as cat_summary_project_execution_percentage %}
+            {% get_value_from_dict cat_values 'summary' 'project' 'average_value' as cat_summary_project_average_value %}
+            {% get_node_id dir cat_id cat_parent_id as node_id %}
+    <tr id="{{ node_id }}" class="{% if cat_id == 0 %}lvl1{% elif cat_parent_id == 0 %}lvl2{% else %}lvl3{% endif %}" style="{% if cat_id != 0 and cat_parent_id != 0 and cat_parent_id != expanded_category_id or cat_is_empty %}display:none;{% endif %}{% if dir == 'inc' %} color: #005988;{% else %} color: #882500;{% endif %}" data-id="{{ cat_id }}" data-parentid="{{ cat_parent_id }}" data-budgetid="{{ budget_id }}" data-dir="{{ dir }}" data-type="all" data-isempty="{{ cat_is_empty }}">
+        <td>{% if cat_id != 0 and cat_parent_id == 0 %}<img id="{{ node_id }}e" src="{% static 'main/images/tr-right.png' %}" style="max-height:8px;{% if cat_is_empty or cat_id == expanded_category_id %} display:none;{% endif %}" onclick="expand_children_category(this)"><img id="{{ node_id }}c" src="{% static 'main/images/tr-down.png' %}" style="max-height:8px;{% if not cat_is_empty and cat_id != expanded_category_id %} display:none;{% endif %}" onclick="close_children_category(this)">{% endif %}</td>
+        <td>{{cat_item}}</td>
+        <td><img id="{{ node_id }}ee" src="{% if cat_summary_project_actual_value or cat_summary_project_planned_value %}{% static 'main/images/tr-right.png' %}{% else %}{% static 'main/images/tr-right-light.png' %}{% endif %}" style="max-height:8px" onclick="expand_children_item(this)"><img id="{{ node_id }}cc" src="{% if cat_summary_project_actual_value or cat_summary_project_planned_value %}{% static 'main/images/tr-down.png' %}{% else %}{% static 'main/images/tr-down-light.png' %}{% endif %}" style="max-height:8px; display:none;" onclick="close_children_item(this)"></td>
+        <td>{% autoescape off %}{% strong_str cat_name %}{% endautoescape %}</td>
+            {% for m in months %}
+                {% get_value_from_dict cat_values m 'all' 'actual_value' as cat_month_all_actual_value %}
+                {% get_value_from_list m 0 as year %}
+                {% get_value_from_list m 1 as month %}
+                {% get_path_wit_cat request.path cat_parent_id as path_with_cat %}
+        <td></td>
+                {% if cat_id != 0 and cat_parent_id != 0 and cat_id != ped_cat and cat_id != ned_cat %}
+        <td id="{{ node_id }}-actual-all-{{ m }}"><a href="{% url 'account_transactions_in_category_period' budget_id cat_id year month base_currency_selected path_with_cat %}" style="{% if dir == 'inc' %} color: #005988;{% else %} color: #882500;{% endif %}" alt="Посмотреть операции" title="Посмотреть операции" id="{{ node_id }}-actual-all-{{ m }}-view" data-val="{{ cat_month_all_actual_value }}" data-month="{{ m }}">{{ cat_month_all_actual_value|floatformat:"2g" }}</a></td>
+                {% else %}
+        <td id="{{ node_id }}-actual-all-{{ m }}"><span id="{{ node_id }}-actual-all-{{ m }}-view" data-val="{{ cat_month_all_actual_value }}" data-month="{{ m }}">{{ cat_month_all_actual_value|floatformat:"2g" }}</span></td>
+                {% endif %}
+            {% endfor %}
+        <td id="{{ node_id }}-planned-all-summary"><span id="{{ node_id }}-planned-all-summary-view" data-val="{{ cat_summary_all_planned_value }}">{{ cat_summary_all_planned_value|floatformat:"2g" }}</span></td>
+        <td id="{{ node_id }}-percentage-all-summary" data-val="{{ cat_summary_all_execution_percentage }}">{{ cat_summary_all_execution_percentage|multiply:100|floatformat:"2g" }}%</td>
+        <td id="{{ node_id }}-average-all-summary" data-val="{{ cat_summary_all_average_value }}">{{ cat_summary_all_average_value|floatformat:"2g" }}</td>
+    </tr>
+    
+    <tr id="{{ node_id }}np" class="{% if cat_id == 0 %}lvl3{% else %}lvl4{% endif %}" style="display:none;{% if dir == 'inc' %} color: #005988;{% else %} color: #882500;{% endif %}" data-id="{{ cat_id }}" data-parentid="{{ cat_parent_id }}" data-budgetid="{{ budget_id }}" data-dir="{{ dir }}" data-type="non-project">
+        <td></td>
+        <td></td>
+        <td></td>
+        <td>-текущие</td>
+            {% for m in months %}
+                {% get_value_from_dict cat_values m 'non_project' 'actual_value' as cat_month_non_project_actual_value %}
+        <td></td>
+        <td id="{{ node_id }}-actual-non-project-{{ m }}"><span id="{{ node_id }}-actual-non-project-{{ m }}-view" data-val="{{ cat_month_non_project_actual_value }}" data-month="{{ m }}">{{ cat_month_non_project_actual_value|floatformat:"2g" }}</span></td>
+            {% endfor %}
+        <td id="{{ node_id }}-planned-non-project-summary"><span id="{{ node_id }}-planned-non-project-summary-view" data-val="{{ cat_summary_non_project_planned_value }}">{{ cat_summary_non_project_planned_value|floatformat:"2g" }}</span></td>
+        <td id="{{ node_id }}-percentage-non-project-summary" data-val="{{ cat_summary_non_project_execution_percentage }}">{{ cat_summary_non_project_execution_percentage|multiply:100|floatformat:"2g" }}%</td>
+        <td id="{{ node_id }}-average-non-project-summary" data-val="{{ cat_summary_non_project_average_value }}">{{ cat_summary_non_project_average_value|floatformat:"2g" }}</td>
+    </tr>
+    
+    <tr id="{{ node_id }}p" class="{% if cat_id == 0 %}lvl3{% else %}lvl4{% endif %}" style="display:none;{% if dir == 'inc' %} color: #005988;{% else %} color: #882500;{% endif %}" data-id="{{ cat_id }}" data-parentid="{{ cat_parent_id }}" data-budgetid="{{ budget_id }}" data-dir="{{ dir }}" data-type="project">
+        <td></td>
+        <td></td>
+        <td></td>
+        <td>-проектные</td>
+            {% for m in months %}
+                {% get_value_from_dict cat_values m 'project' 'actual_value' as cat_month_project_actual_value %}
+                {% get_value_from_dict cat_values m 'projects' as cat_month_projects %}
+        <td>{% if cat_month_projects %}<img id="{{ node_id }}-actual-project-{{ m }}pe" src="{% static 'main/images/tr-right.png' %}" style="max-height:8px" onclick="expand_project(this)"><img id="{{ node_id }}-actual-project-{{ m }}pc" src="{% static 'main/images/tr-down.png' %}" style="max-height:8px; display:none;" onclick="close_project(this)">{% endif %}</td>
+        <td id="{{ node_id }}-actual-project-{{ m }}"><span id="{{ node_id }}-actual-project-{{ m }}-view" data-val="{{ cat_month_project_actual_value }}" data-month="{{ m }}">{{ cat_month_project_actual_value|floatformat:"2g" }}</span>{% if cat_month_projects %}
+            <p id="{{ node_id }}-actual-project-{{ m }}pp" style="margin: 0px; display:none">
+                {% for pr_id, pr_dict in cat_month_projects.items %}
+                    {% get_value_from_dict pr_dict 'name' as pr_name %}
+                    {% get_value_from_dict pr_dict 'actual_value' as pr_actual_value %}
+                    {% autoescape off %}{% strong_str pr_name %}:&nbsp;{% strong_str pr_actual_value|floatformat:"2g" %}{% endautoescape %}<br>
+                {% endfor %}
+            </p>{% endif %}
+        </td>
+            {% endfor %}
+        <td id="{{ node_id }}-planned-project-summary"><span id="{{ node_id }}-planned-project-summary-view" data-val="{{ cat_summary_project_planned_value }}">{{ cat_summary_project_planned_value|floatformat:"2g" }}</span></td>
+        <td id="{{ node_id }}-percentage-project-summary" data-val="{{ cat_summary_project_execution_percentage }}">{{ cat_summary_project_execution_percentage|multiply:100|floatformat:"2g" }}%</td>
+        <td id="{{ node_id }}-average-project-summary" data-val="{{ cat_summary_project_average_value }}">{{ cat_summary_project_average_value|floatformat:"2g" }}</td>
+    </tr>
+        {% endfor %}
+    {% endfor %}
+
+    {% get_value_from_dict budget_items 'closing_balance' as balance_items %}
+    {% for bal_id, bal_dict in balance_items.items %}
+        {% get_value_from_dict bal_dict 'item' as bal_item %}
+        {% get_value_from_dict bal_dict 'name' as bal_name %}
+        {% get_value_from_dict bal_dict 'parent_parent_id' as bal_parent_parent_id %}
+        {% get_value_from_dict bal_dict 'parent_id' as bal_parent_id %}
+        {% get_value_from_dict bal_dict 'is_empty' as bal_is_empty %}
+        {% get_value_from_dict bal_dict 'values' as bal_values %}
+        {% get_value_from_dict bal_values 'summary' 'planned_balance' as bal_summary_planned_balance %}
+        {% get_bal_node_id 'closing_balance' bal_id bal_parent_id bal_parent_parent_id as bal_node_id %}
+    <tr id="{{ bal_node_id }}" class="{% if bal_parent_parent_id %}lvl4{% elif bal_parent_id %}lvl3{% elif bal_id %}lvl2{% else %}lvl1{% endif %}" style="{% if bal_id or bal_is_empty %}display:none;{% endif %}" data-id="{{ bal_id }}" data-parentid="{{ bal_parent_id }}" data-parentparentid="{{ bal_parent_parent_id }}">
+        <td>{% if not bal_parent_parent_id %}<img id="{{ bal_node_id }}e" {% if bal_parent_id %}src="{% static 'main/images/tr-right-3.png' %}"{% elif bal_id %}src="{% static 'main/images/tr-right-2.png' %}"{% else %}src="{% static 'main/images/tr-right.png' %}"{% endif %} style="max-height:8px;" onclick="expand_children_balance(this)"><img id="{{ bal_node_id }}c" {% if bal_parent_id %}src="{% static 'main/images/tr-down-3.png' %}"{% elif bal_id %}src="{% static 'main/images/tr-down-2.png' %}"{% else %}src="{% static 'main/images/tr-down.png' %}"{% endif %} style="max-height:8px; display:none;" onclick="close_children_balance(this)">{% endif %}</td>
+        <td>{{ bal_item }}</td>
+        <td></td>
+        <td>{% autoescape off %}{% strong_str bal_name %}{% endautoescape %}</td>
+        {% for m in months %}
+            {% get_value_from_dict bal_values m 'actual_balance' as bal_month_actual_balance %}
+        <td></td>
+        <td id="{{ bal_node_id }}-actual-{{ m }}" data-val="{{ bal_month_actual_balance }}" data-month="{{ m }}">{{ bal_month_actual_balance|floatformat:"2g" }}</td>
+        {% endfor %}
+        <td>{{ bal_summary_planned_balance|floatformat:"2g" }}</td>
+        <td></td>
+        <td></td>
+    </tr>
+    {% endfor %}
+
+    {% get_value_from_dict budget_items 'difference' as difference %}
+    {% get_value_from_dict difference 'item' as dif_item %}
+    {% get_value_from_dict difference 'name' as dif_name %}
+    {% get_value_from_dict difference 'values' as dif_values %}
+    {% get_value_from_dict dif_values 'summary' 'all' 'planned_value' as dif_summary_all_planned_value %}
+    {% get_value_from_dict dif_values 'summary' 'all' 'actual_value' as dif_summary_all_actual_value %}
+    {% get_value_from_dict dif_values 'summary' 'all' 'execution_percentage' as dif_summary_all_execution_percentage %}
+    {% get_value_from_dict dif_values 'summary' 'all' 'average_value' as dif_summary_all_average_value %}
+    {% get_value_from_dict dif_values 'summary' 'non_project' 'planned_value' as dif_summary_non_project_planned_value %}
+    {% get_value_from_dict dif_values 'summary' 'non_project' 'actual_value' as dif_summary_non_project_actual_value %}
+    {% get_value_from_dict dif_values 'summary' 'non_project' 'execution_percentage' as dif_summary_non_project_execution_percentage %}
+    {% get_value_from_dict dif_values 'summary' 'non_project' 'average_value' as dif_summary_non_project_average_value %}
+    {% get_value_from_dict dif_values 'summary' 'project' 'planned_value' as dif_summary_project_planned_value %}
+    {% get_value_from_dict dif_values 'summary' 'project' 'actual_value' as dif_summary_project_actual_value %}
+    {% get_value_from_dict dif_values 'summary' 'project' 'execution_percentage' as dif_summary_project_execution_percentage %}
+    {% get_value_from_dict dif_values 'summary' 'project' 'average_value' as dif_summary_project_average_value %}
+    <tr id="dif" class="lvl1">
+        <td></td>
+        <td>{{dif_item}}</td>
+        <td><img id="difee" src="{% if dif_summary_project_actual_value %}{% static 'main/images/tr-right.png' %}{% else %}{% static 'main/images/tr-right-light.png' %}{% endif %}" style="max-height:8px" onclick="expand_children_item(this)"><img id="difcc" src="{% if dif_summary_project_actual_value %}{% static 'main/images/tr-down.png' %}{% else %}{% static 'main/images/tr-down-light.png' %}{% endif %}" style="max-height:8px; display:none;" onclick="close_children_item(this)"></td>
+        <td>{% autoescape off %}{% strong_str dif_name %}{% endautoescape %}</td>
+        {% for m in months %}
+            {% get_value_from_dict dif_values m 'all' 'actual_value' as dif_month_all_actual_value %}
+        <td></td>
+        <td id="dif-actual-all-{{ m }}"><span id="dif-actual-all-{{ m }}-view" data-val="{{ dif_month_all_actual_value }}" data-month="{{ m }}">{{ dif_month_all_actual_value|floatformat:"2g" }}</span></td>
+        {% endfor %}
+        <td id="dif-planned-all-summary"><span id="dif-planned-all-summary-view" data-val="{{ dif_summary_all_planned_value }}">{{ dif_summary_all_planned_value|floatformat:"2g" }}</span></td>
+        <td id="dif-percentage-all-summary" data-val="{{ dif_summary_all_execution_percentage }}">{{ dif_summary_all_execution_percentage|multiply:100|floatformat:"2g" }}%</td>
+        <td id="dif-average-all-summary" data-val="{{ dif_summary_all_average_value }}">{{ dif_summary_all_average_value|floatformat:"2g" }}</td>
+    </tr>
+    
+    <tr id="difnp" class="lvl3" style="display:none;">
+        <td></td>
+        <td></td>
+        <td></td>
+        <td>-текущие</td>
+        {% for m in months %}
+            {% get_value_from_dict dif_values m 'non_project' 'actual_value' as dif_month_non_project_actual_value %}
+        <td></td>
+        <td id="dif-actual-non-project-{{ m }}"><span id="dif-actual-non-project-{{ m }}-view" data-val="{{ dif_month_non_project_actual_value }}" data-month="{{ m }}">{{ dif_month_non_project_actual_value|floatformat:"2g" }}</span></td>
+        {% endfor %}
+        <td id="dif-planned-non-project-summary"><span id="dif-planned-non-project-summary-view" data-val="{{ dif_summary_non_project_planned_value }}">{{ dif_summary_non_project_planned_value|floatformat:"2g" }}</span></td>
+        <td id="dif-percentage-non-project-summary" data-val="{{ dif_summary_non_project_execution_percentage }}">{{ dif_summary_non_project_execution_percentage|multiply:100|floatformat:"2g" }}%</td>
+        <td id="dif-average-non-project-summary" data-val="{{ dif_summary_non_project_average_value }}">{{ dif_summary_non_project_average_value|floatformat:"2g" }}</td>
+    </tr>
+    
+    <tr id="difp" class="lvl3" style="display:none;">
+        <td></td>
+        <td></td>
+        <td></td>
+        <td>-проектные</td>
+        {% for m in months %}
+            {% get_value_from_dict dif_values m 'project' 'actual_value' as dif_month_project_actual_value %}
+        <td></td>
+        <td id="dif-actual-project-{{ m }}"><span id="dif-actual-project-{{ m }}-view" data-val="{{ dif_month_project_actual_value }}" data-month="{{ m }}">{{ dif_month_project_actual_value|floatformat:"2g" }}</span></td>
+        {% endfor %}
+        <td id="dif-planned-project-summary"><span id="dif-planned-project-summary-view" data-val="{{ dif_summary_project_planned_value }}">{{ dif_summary_project_planned_value|floatformat:"2g" }}</span></td>
+        <td id="dif-percentage-project-summary" data-val="{{ dif_summary_project_execution_percentage }}">{{ dif_summary_project_execution_percentage|multiply:100|floatformat:"2g" }}%</td>
+        <td id="dif-average-project-summary" data-val="{{ dif_summary_project_average_value }}">{{ dif_summary_project_average_value|floatformat:"2g" }}</td>
+    </tr>
+
+</table>
+{% endblock %}
