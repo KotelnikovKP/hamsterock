@@ -1,0 +1,779 @@
+{% extends 'main/base.html' %}
+{% load main_tags %}
+{% load static %}
+
+{% block scripts %}
+<script>
+function expand_children_category(t) {
+    const elsT = document.querySelectorAll('tr[id^="' + t.parentNode.parentNode.id + '-"]');
+    for (let el of elsT) {
+        if (el.id.substr(-1) != 'p' && el.dataset.isempty != 'True') {
+            el.style.display = "";
+        }
+    }
+    t.style.display = "none";
+    at = document.querySelector('[id="' + t.parentNode.parentNode.id + 'psel"]');
+    if ( at ) {
+        at.style.display = "none";
+    }
+    at = document.querySelector('[id="' + t.parentNode.parentNode.id + 'sel"]');
+    if ( at ) {
+        at.style.display = "";
+    }
+    at = document.querySelector('[id="' + t.parentNode.parentNode.id + 'c"]');
+    at.style.display = "";
+}
+
+function close_children_category(t) {
+    const elsT = document.querySelectorAll('tr[id^="' + t.parentNode.parentNode.id + '-"]');
+    for (let el of elsT) {
+        el.style.display = "none";
+        if (el.id.substr(-1) != 'p') {
+            at = document.querySelector('[id="' + el.id + 'ee"]');
+            at.style.display = "";
+            at = document.querySelector('[id="' + el.id + 'cc"]');
+            at.style.display = "none";
+        }
+    }
+    el = document.querySelector('[id="' + t.parentNode.parentNode.id + 'np"]');
+    el.style.display = "none";
+    el = document.querySelector('[id="' + t.parentNode.parentNode.id + 'p"]');
+    el.style.display = "none";
+    at = document.querySelector('[id="' + t.parentNode.parentNode.id + 'cc"]');
+    at.style.display = "none";
+    at = document.querySelector('[id="' + t.parentNode.parentNode.id + 'ee"]');
+    at.style.display = "";
+    at = document.querySelector('[id="' + t.parentNode.parentNode.id + 'psel"]');
+    if ( at ) {
+        at.style.display = "none";
+    }
+    at = document.querySelector('[id="' + t.parentNode.parentNode.id + 'sel"]');
+    if ( at ) {
+        at.style.display = "none";
+    }
+    t.style.display = "none";
+    at = document.querySelector('[id="' + t.parentNode.parentNode.id + 'e"]');
+    at.style.display = "";
+}
+
+function expand_children_item(t) {
+    el = document.querySelector('[id="' + t.parentNode.parentNode.id + 'np"]');
+    el.style.display = "";
+    el = document.querySelector('[id="' + t.parentNode.parentNode.id + 'p"]');
+    el.style.display = "";
+    t.style.display = "none";
+    at = document.querySelector('[id="' + t.parentNode.parentNode.id + 'cc"]');
+    at.style.display = "";
+}
+
+function close_children_item(t) {
+    el = document.querySelector('[id="' + t.parentNode.parentNode.id + 'np"]');
+    el.style.display = "none";
+    el = document.querySelector('[id="' + t.parentNode.parentNode.id + 'p"]');
+    el.style.display = "none";
+    t.style.display = "none";
+    at = document.querySelector('[id="' + t.parentNode.parentNode.id + 'ee"]');
+    at.style.display = "";
+}
+
+function expand_project(t) {
+    el = document.querySelector('[id="' + t.parentNode.parentNode.id + 'p"]');
+    el.style.display = "";
+    t.style.display = "none";
+    at = document.querySelector('[id="' + t.parentNode.parentNode.id + 'c"]');
+    at.style.display = "";
+}
+
+function close_project(t) {
+    el = document.querySelector('[id="' + t.parentNode.parentNode.id + 'p"]');
+    el.style.display = "none";
+    t.style.display = "none";
+    at = document.querySelector('[id="' + t.parentNode.parentNode.id + 'e"]');
+    at.style.display = "";
+}
+
+function getCookie(name) {
+    let cookieValue = null;
+    if (document.cookie && document.cookie !== "") {
+        const cookies = document.cookie.split(";");
+        for (let i = 0; i < cookies.length; i++) {
+            const cookie = cookies[i].trim();
+            // Does this cookie string begin with the name we want?
+            if (cookie.substring(0, name.length + 1) === (name + "=")) {
+                cookieValue = decodeURIComponent(cookie.substring(name.length + 1));
+                break;
+            }
+        }
+    }
+    return cookieValue;
+}
+
+async function postData(url = '', data = {}) {
+  // Default options are marked with *
+  const response = await fetch(url, {
+    method: 'POST', // *GET, POST, PUT, DELETE, etc.
+    mode: 'cors', // no-cors, *cors, same-origin
+    cache: 'no-cache', // *default, no-cache, reload, force-cache, only-if-cached
+    credentials: 'same-origin', // include, *same-origin, omit
+    headers: {
+        'Content-Type': 'application/json',
+        // 'Content-Type': 'application/x-www-form-urlencoded',
+        'X-Requested-With': 'XMLHttpRequest',
+        'X-CSRFToken': getCookie('csrftoken'),
+    },
+    redirect: 'follow', // manual, *follow, error
+    referrerPolicy: 'no-referrer', // no-referrer, *client
+    body: JSON.stringify(data) // body data type must match "Content-Type" header
+  });
+  return await response.json(); // parses JSON response into native JavaScript objects
+}
+
+function show_plan_form(t) {
+    var p = t.parentNode;
+    var c = t.parentNode.parentNode;
+    var sv = document.querySelector('[id="' + p.id + '-view"]');
+    sv.style.display = "none";
+    var sf = document.querySelector('[id="' + p.id + '-form"]');
+    if (!sf) {
+        sf = document.createElement('span');
+        sf.id = p.id + "-form";
+        sf.className = "cell-form";
+        sf.style.display = "none";
+        val = plan_round(Number(sv.dataset.val.replace(/,/g, '.')));
+        sf.innerHTML = `
+            <form name="${p.id}" style="display: inline-flex;" method="post" onsubmit="post_enter_plan_form(this);return false;">
+                <input type="hidden" name="cat_budget_id" value="${c.dataset.budgetid}">
+                <input type="hidden" name="cat_dir" value="${c.dataset.dir}">
+                <input type="hidden" name="cat_id" value="${c.dataset.id}">
+                <input type="hidden" name="cat_parent_id" value="${c.dataset.parentid}">
+                <input type="hidden" name="cat_type" value="${c.dataset.type}">
+                <input type="hidden" name="cat_year" value="${c.dataset.year}">
+                <input type="hidden" name="cat_month" value="${sv.dataset.month}">
+                <input type="number" name="cat_planned_value" value="${val}" step="{{ number_step }}" class="plan-form-input">
+                <img id="${p.id}-ok" src="{% static 'main/images/ok.png' %}" style="max-height:16px" onclick="post_plan_form(this)">
+                <img id="${p.id}-cancel" src="{% static 'main/images/cancel.png' %}" style="max-height:16px" onclick="hide_plan_form(this)">
+            </form>`; // onblur="hide_plan_form(this)"
+        p.append(sf);
+    } else {
+        document.forms[p.id].cat_planned_value.value = sv.dataset.val.replace(/,/g, '.')
+    }
+    sf.style.display = "";
+    document.forms[p.id].cat_planned_value.focus();
+}
+
+function plan_round(val) {
+    let dr = {{ digit_rounding }};
+    return Number((val * 10 ** dr).toFixed().replace(/,/g, '.')) * 10 ** -dr
+}
+
+function post_plan_form(t) {
+    var plan = new Intl.NumberFormat([], { style: "decimal", minimumFractionDigits: 2, maximumFractionDigits: 2});
+    cur_year = new Date().getFullYear()
+    elf = document.querySelector('[id="' + t.parentNode.parentNode.parentNode.id + '-form"]');
+    elf.style.display = "none";
+    elv = document.querySelector('[id="' + t.parentNode.parentNode.parentNode.id + '-view"]');
+    elv.style.display = "";
+
+    f = document.forms[t.parentNode.parentNode.parentNode.id];
+    el_tr = t.parentNode.parentNode.parentNode.parentNode;
+    c_dir = el_tr.dataset.dir;
+    c_id = el_tr.dataset.id;
+    c_parent_id = el_tr.dataset.parentid;
+    c_year = el_tr.dataset.year;
+    c_month = elv.dataset.month;
+
+    postData('{% url 'edit_budget_register' %}', { cat_budget_id: f.cat_budget_id.value, cat_id: f.cat_id.value, cat_parent_id: f.cat_parent_id.value, cat_dir: f.cat_dir.value, cat_type: f.cat_type.value, cat_year: f.cat_year.value, cat_month: f.cat_month.value, cat_planned_value: f.cat_planned_value.value})
+        .then((result) => {
+            if (result.status == 'Ok') {
+                let cat_keys = [c_dir + '-' + c_parent_id + '-' + c_id, c_dir + '-' + c_parent_id, c_dir + '-0', 'dif'];
+                let cat_types = ['all', 'non-project', 'project'];
+                for (let cat_key of cat_keys) {
+                    for (let cat_type of cat_types) {
+                        if (cat_type == 'all') {
+                            delta = Number(result.delta_all.replace(/,/g, '.'));
+                        } else if (cat_type == 'non-project') {
+                            delta = Number(result.delta_non_project.replace(/,/g, '.'));
+                        } else {
+                            delta = Number(result.delta_project.replace(/,/g, '.'));
+                        }
+                        if (cat_key == 'dif' && c_dir == 'exp') {
+                            delta = -delta;
+                        }
+                        // 1. Категория / Родительская категория / раздел | месяц
+                        planned_el = document.querySelector('[id="' + cat_key + '-planned-' + cat_type + '-' + c_month + '-view"]');
+                        planned_el.dataset.val = Number(planned_el.dataset.val.replace(/,/g, '.')) + delta;
+                        planned_el.innerHTML = plan.format(planned_el.dataset.val);
+
+                        // 2. Категория / Родительская категория / раздел | год
+                        planned_el = document.querySelector('[id="' + cat_key + '-planned-' + cat_type + '-year-view"]');
+                        planned_el.dataset.val = Number(planned_el.dataset.val.replace(/,/g, '.')) + delta;
+                        planned_el.innerHTML = plan.format(planned_el.dataset.val);
+                        if (Number(c_month) <= {{ calculate_month }} || Number(c_year) != cur_year) {
+                            current_plan_el = document.querySelector('[id="' + cat_key + '-current_plan-' + cat_type + '-year"]');
+                            current_plan_el.dataset.val = Number(current_plan_el.dataset.val.replace(/,/g, '.')) + delta;
+                            current_plan_el.innerHTML = plan.format(current_plan_el.dataset.val);
+                            actual_el = document.querySelector('[id="' + cat_key + '-actual-' + cat_type + '-year"]');
+                            if (Number(actual_el.dataset.val.replace(/,/g, '.')) != 0) {
+                                percentage_el = document.querySelector('[id="' + cat_key + '-percentage-' + cat_type + '-year"]');
+                                if (Number(planned_el.dataset.val.replace(/,/g, '.')) == 0) {
+                                    percentage_el.dataset.val = "9.9999";
+                                    percentage_el.innerHTML = plan.format(Number(percentage_el.dataset.val) * 100) + '%';
+                                } else {
+                                    percentage_el.dataset.val = Number(actual_el.dataset.val.replace(/,/g, '.')) / Number(current_plan_el.dataset.val.replace(/,/g, '.'));
+                                    percentage_el.innerHTML = plan.format(Number(percentage_el.dataset.val) * 100) + '%';
+                                }
+                            }
+                        }
+                    }
+                }
+                // Меняем остатки
+                delta = Number(result.delta_all.replace(/,/g, '.'));
+                if (c_dir == 'exp') {
+                    delta = -delta;
+                }
+                // Сначала остаток на конец данного месяца
+                cl_bal_el = document.querySelector('[id="closing_balance-0-planned-' + c_month + '"]');
+                cl_bal_el.dataset.val = Number(cl_bal_el.dataset.val.replace(/,/g, '.')) + delta;
+                cl_bal_el.innerHTML = plan.format(cl_bal_el.dataset.val);
+                // Далее цикл по оставшимся месяцам со сменой остатков на начало и конец
+                for (let m = parseInt(c_month, 10)+1; m < 13; m++) {
+                    op_bal_el = document.querySelector('[id="opening_balance-0-planned-' + String(m) + '"]');
+                    op_bal_el.dataset.val = Number(op_bal_el.dataset.val.replace(/,/g, '.')) + delta;
+                    op_bal_el.innerHTML = plan.format(op_bal_el.dataset.val);
+                    cl_bal_el = document.querySelector('[id="closing_balance-0-planned-' + String(m) + '"]');
+                    cl_bal_el.dataset.val = Number(cl_bal_el.dataset.val.replace(/,/g, '.')) + delta;
+                    cl_bal_el.innerHTML = plan.format(cl_bal_el.dataset.val);
+                }
+                // Устанавливаем остаток на конец года
+                cl_bal_el = document.querySelector('[id="closing_balance-0-planned-year"]');
+                cl_bal_el.dataset.val = Number(cl_bal_el.dataset.val.replace(/,/g, '.')) + delta;
+                cl_bal_el.innerHTML = plan.format(cl_bal_el.dataset.val);
+                // Устанавливаем остаток на конец текущего периода и пересчитываем % исполнения
+                if (Number(c_month) <= {{ calculate_month }} || Number(c_year) != cur_year) {
+                    cl_bal_el = document.querySelector('[id="closing_balance-0-current_plan-year"]');
+                    cl_bal_el.dataset.val = Number(cl_bal_el.dataset.val.replace(/,/g, '.')) + delta;
+                    cl_bal_el.innerHTML = plan.format(cl_bal_el.dataset.val);
+                    actual_el = document.querySelector('[id="closing_balance-0-actual-year"]');
+                    if (Number(actual_el.dataset.val.replace(/,/g, '.')) != 0) {
+                        percentage_el = document.querySelector('[id="closing_balance-0-percentage-year"]');
+                        if (Number(cl_bal_el.dataset.val.replace(/,/g, '.')) == 0) {
+                            percentage_el.dataset.val = "9.9999";
+                            percentage_el.innerHTML = plan.format(Number(percentage_el.dataset.val) * 100) + '%';
+                        } else {
+                            percentage_el.dataset.val = Number(actual_el.dataset.val.replace(/,/g, '.')) / Number(cl_bal_el.dataset.val.replace(/,/g, '.'));
+                            percentage_el.innerHTML = plan.format(Number(percentage_el.dataset.val) * 100) + '%';
+                        }
+                    }
+                }
+            } else {
+                f.cat_planned_value.value = elv.dataset.val.replace(/,/g, '.');
+            }
+        });
+
+}
+
+function post_enter_plan_form(t) {
+    el = document.querySelector('[id="' + t.parentNode.parentNode.id + '-ok"]');
+    post_plan_form(el);
+}
+
+function hide_plan_form(t) {
+    el = document.querySelector('[id="' + t.parentNode.parentNode.parentNode.id + '-form"]');
+    el.style.display = "none";
+    el = document.querySelector('[id="' + t.parentNode.parentNode.parentNode.id + '-view"]');
+    el.style.display = "";
+}
+
+function show_select_parent_category(t) {
+    el = document.querySelector('[id="' + t.parentNode.parentNode.id + 'sel"]');
+    el.style.display = "none";
+    el = document.querySelector('[id="' + t.parentNode.parentNode.id + 'psel"]');
+    el.style.display = "";
+}
+
+function post_select_parent_category(t) {
+    eltr = t.parentNode.parentNode.parentNode.parentNode
+    els = document.querySelector('[id="' + eltr.id + 'nsel"]');
+    el = document.querySelector('[id="' + eltr.dataset.dir + '-' + els.value + '"]');
+    el.style.display = "";
+    els.removeChild(els.querySelector('[value="' + els.value + '"]'));
+    if ( els.options.length == 0 ) {
+        el = document.querySelector('[id="' + eltr.id + 'psel"]');
+        el.parentNode.removeChild(el);
+        el = document.querySelector('[id="' + eltr.id + 'sel"]');
+        el.parentNode.removeChild(el);
+    } else {
+        el = document.querySelector('[id="' + eltr.id + 'psel"]');
+        el.style.display = "none";
+        el = document.querySelector('[id="' + eltr.id + 'sel"]');
+        el.style.display = "";
+    }
+}
+
+function post_enter_select_parent_category(t) {
+    el = document.querySelector('[id="' + t.parentNode.parentNode.parentNode.id + 'nsel-ok"]');
+    post_select_parent_category(el);
+}
+
+function hide_select_parent_category(t) {
+    el = document.querySelector('[id="' + t.parentNode.parentNode.parentNode.parentNode.id + 'psel"]');
+    el.style.display = "none";
+    el = document.querySelector('[id="' + t.parentNode.parentNode.parentNode.parentNode.id + 'sel"]');
+    el.style.display = "";
+}
+
+function show_select_category(t) {
+    el = document.querySelector('[id="' + t.parentNode.parentNode.id + 'sel"]');
+    el.style.display = "none";
+    el = document.querySelector('[id="' + t.parentNode.parentNode.id + 'psel"]');
+    el.style.display = "";
+}
+
+function post_select_category(t) {
+    elp = t.parentNode.parentNode.parentNode.parentNode;
+    els = document.querySelector('[id="' + elp.id + 'nsel"]');
+
+    cat_id = els.value;
+    cat_item = get_item(els.options[els.selectedIndex].innerHTML);
+    cat_name = get_strong_name(els.options[els.selectedIndex].innerHTML);
+
+    el_before = document.querySelector('[id="' + elp.id + 'p"]');
+    elsT = document.querySelectorAll('tr[id^="' + elp.id + '-"]');
+    for (let el of elsT) {
+        if (el.id.substr(-1) != 'p' && el.childNodes[3].innerHTML > cat_item) {
+            break;
+        } else {
+            el_before = el;
+        }
+    }
+
+    cat_types = ['all', 'non-project', 'project'];
+    for (let cat_type of cat_types) {
+        new_tr = document.createElement('tr');
+        if (cat_type == 'all') {
+            new_tr.id = elp.id + '-' + cat_id;
+            new_tr.className = "lvl3";
+        } else if (cat_type == 'non-project') {
+            new_tr.id = elp.id + '-' + cat_id + 'np';
+            new_tr.className = "lvl4";
+            new_tr.style.display = "none";
+        } else {
+            new_tr.id = elp.id + '-' + cat_id + 'p';
+            new_tr.className = "lvl4";
+            new_tr.style.display = "none";
+        }
+        if (elp.dataset.dir == 'inc') {
+            new_tr.style.color = "#005988";
+        } else {
+            new_tr.style.color = "#882500";
+        }
+        new_tr.dataset.id = cat_id;
+        new_tr.dataset.parentid = elp.dataset.id;
+        new_tr.dataset.budgetid = elp.dataset.budgetid;
+        new_tr.dataset.dir = elp.dataset.dir;
+        new_tr.dataset.type = cat_type;
+        new_tr.dataset.year = elp.dataset.year;
+        new_tr.dataset.isempty = "False";
+        if (cat_type == 'all') {
+            start_html = `
+        <td></td>
+        <td>${cat_item}</td>
+        <td><img id="${elp.id}-${cat_id}ee" src="{% static 'main/images/tr-right-light.png' %}" style="max-height:8px" onclick="expand_children_item(this)"><img id="${elp.id}-${cat_id}cc" src="{% static 'main/images/tr-down-light.png' %}" style="max-height:8px; display:none;" onclick="close_children_item(this)"></td>
+        <td>${cat_name}</td>
+            `;
+        } else if (cat_type == 'non-project') {
+            start_html = `
+        <td></td>
+        <td></td>
+        <td></td>
+        <td>-текущие</td>
+            `;
+        } else {
+            start_html = `
+        <td></td>
+        <td></td>
+        <td></td>
+        <td>-проектные</td>
+            `;
+        }
+        new_tr.innerHTML = start_html + `
+        <td id="${elp.id}-${cat_id}-planned-${cat_type}-year"><span id="${elp.id}-${cat_id}-planned-${cat_type}-year-view" data-val="{{ 0|floatformat:"2g" }}">{{ 0|floatformat:"2g" }}</span></td>
+        <td id="${elp.id}-${cat_id}-current_plan-${cat_type}-year" data-val="{{ 0|floatformat:"2g" }}"{% if calculate_month == 12 %} style="display:none;"{% endif %}>{{ 0|floatformat:"2g" }}</td>
+        <td></td>
+        <td id="${elp.id}-${cat_id}-actual-${cat_type}-year" data-val="{{ 0|floatformat:"2g" }}">{{ 0|floatformat:"2g" }}</td>
+        <td id="${elp.id}-${cat_id}-percentage-${cat_type}-year" data-val="{{ 0|floatformat:"4g" }}">{{ 0|floatformat:"2g" }}%</td>
+        <td id="${elp.id}-${cat_id}-average-${cat_type}-year" data-val="{{ 0|floatformat:"2g" }}">{{ 0|floatformat:"2g" }}</td>
+        <td id="${elp.id}-${cat_id}-planned-${cat_type}-1"><span id="${elp.id}-${cat_id}-planned-${cat_type}-1-view" data-val="{{ 0|floatformat:"2g" }}" data-month="1" class="cell-link" onclick="show_plan_form(this)">{{ 0|floatformat:"2g" }}</span></td>
+        <td id="${elp.id}-${cat_id}-planned-${cat_type}-2"><span id="${elp.id}-${cat_id}-planned-${cat_type}-2-view" data-val="{{ 0|floatformat:"2g" }}" data-month="2" class="cell-link" onclick="show_plan_form(this)">{{ 0|floatformat:"2g" }}</span></td>
+        <td id="${elp.id}-${cat_id}-planned-${cat_type}-3"><span id="${elp.id}-${cat_id}-planned-${cat_type}-3-view" data-val="{{ 0|floatformat:"2g" }}" data-month="3" class="cell-link" onclick="show_plan_form(this)">{{ 0|floatformat:"2g" }}</span></td>
+        <td id="${elp.id}-${cat_id}-planned-${cat_type}-4"><span id="${elp.id}-${cat_id}-planned-${cat_type}-4-view" data-val="{{ 0|floatformat:"2g" }}" data-month="4" class="cell-link" onclick="show_plan_form(this)">{{ 0|floatformat:"2g" }}</span></td>
+        <td id="${elp.id}-${cat_id}-planned-${cat_type}-5"><span id="${elp.id}-${cat_id}-planned-${cat_type}-5-view" data-val="{{ 0|floatformat:"2g" }}" data-month="5" class="cell-link" onclick="show_plan_form(this)">{{ 0|floatformat:"2g" }}</span></td>
+        <td id="${elp.id}-${cat_id}-planned-${cat_type}-6"><span id="${elp.id}-${cat_id}-planned-${cat_type}-6-view" data-val="{{ 0|floatformat:"2g" }}" data-month="6" class="cell-link" onclick="show_plan_form(this)">{{ 0|floatformat:"2g" }}</span></td>
+        <td id="${elp.id}-${cat_id}-planned-${cat_type}-7"><span id="${elp.id}-${cat_id}-planned-${cat_type}-7-view" data-val="{{ 0|floatformat:"2g" }}" data-month="7" class="cell-link" onclick="show_plan_form(this)">{{ 0|floatformat:"2g" }}</span></td>
+        <td id="${elp.id}-${cat_id}-planned-${cat_type}-8"><span id="${elp.id}-${cat_id}-planned-${cat_type}-8-view" data-val="{{ 0|floatformat:"2g" }}" data-month="8" class="cell-link" onclick="show_plan_form(this)">{{ 0|floatformat:"2g" }}</span></td>
+        <td id="${elp.id}-${cat_id}-planned-${cat_type}-9"><span id="${elp.id}-${cat_id}-planned-${cat_type}-9-view" data-val="{{ 0|floatformat:"2g" }}" data-month="9" class="cell-link" onclick="show_plan_form(this)">{{ 0|floatformat:"2g" }}</span></td>
+        <td id="${elp.id}-${cat_id}-planned-${cat_type}-10"><span id="${elp.id}-${cat_id}-planned-${cat_type}-10-view" data-val="{{ 0|floatformat:"2g" }}" data-month="10" class="cell-link" onclick="show_plan_form(this)">{{ 0|floatformat:"2g" }}</span></td>
+        <td id="${elp.id}-${cat_id}-planned-${cat_type}-11"><span id="${elp.id}-${cat_id}-planned-${cat_type}-11-view" data-val="{{ 0|floatformat:"2g" }}" data-month="11" class="cell-link" onclick="show_plan_form(this)">{{ 0|floatformat:"2g" }}</span></td>
+        <td id="${elp.id}-${cat_id}-planned-${cat_type}-12"><span id="${elp.id}-${cat_id}-planned-${cat_type}-12-view" data-val="{{ 0|floatformat:"2g" }}" data-month="12" class="cell-link" onclick="show_plan_form(this)">{{ 0|floatformat:"2g" }}</span></td>
+        `;
+        el_before.after(new_tr);
+        el_before = new_tr;
+    }
+
+    els.removeChild(els.querySelector('[value="' + els.value + '"]'));
+    if ( els.options.length == 0 ) {
+        el = document.querySelector('[id="' + elp.id + 'psel"]');
+        el.parentNode.removeChild(el);
+        el = document.querySelector('[id="' + elp.id + 'sel"]');
+        el.parentNode.removeChild(el);
+    } else {
+        el = document.querySelector('[id="' + elp.id + 'psel"]');
+        el.style.display = "none";
+        el = document.querySelector('[id="' + elp.id + 'sel"]');
+        el.style.display = "";
+    }
+}
+
+function post_enter_select_category(t) {
+    el = document.querySelector('[id="' + t.parentNode.parentNode.parentNode.id + 'nsel-ok"]');
+    post_select_category(el);
+}
+
+function hide_select_category(t) {
+    el = document.querySelector('[id="' + t.parentNode.parentNode.parentNode.parentNode.id + 'psel"]');
+    el.style.display = "none";
+    el = document.querySelector('[id="' + t.parentNode.parentNode.parentNode.parentNode.id + 'sel"]');
+    el.style.display = "";
+}
+
+function get_item(s) {
+    let pos = -1;
+    let n = "";
+    if ((pos = s.indexOf(' ')) != -1 ) {
+        n = s.slice(0, pos)
+    } else {
+        n = ""
+    }
+    return n;
+}
+
+function get_strong_name(s) {
+    let pos = -1;
+    let n = "";
+    let sn = "";
+    if ((pos = s.indexOf(' ')) != -1 ) {
+        n = s.slice(pos + 1)
+    } else {
+        n = s
+    }
+    pos = -1;
+    let prev_pos = 0;
+    while ((pos = n.indexOf(' ', pos + 1)) != -1) {
+        if ( sn == "" ) {
+            sn = n.slice(prev_pos, pos);
+        } else {
+            sn = sn + "&nbsp;" + n.slice(prev_pos, pos);
+        }
+        prev_pos = pos + 1
+    }
+    if ( sn == "" ) {
+        sn = n.slice(prev_pos);
+    } else {
+        sn = sn + "&nbsp;" + n.slice(prev_pos);
+    }
+    return sn
+}
+
+function expand_children_balance(t) {
+    const elsT = document.querySelectorAll('tr[id^="' + t.parentNode.parentNode.id + '-"]');
+    elp_id = t.parentNode.parentNode.dataset.id;
+    for (let el of elsT) {
+        if (el.dataset.parentid == elp_id) {
+            el.style.display = "";
+        }
+    }
+    t.style.display = "none";
+    at = document.querySelector('[id="' + t.parentNode.parentNode.id + 'c"]');
+    at.style.display = "";
+}
+
+function close_children_balance(t) {
+    const elsT = document.querySelectorAll('tr[id^="' + t.parentNode.parentNode.id + '-"]');
+    let elp_id = t.parentNode.parentNode.dataset.id;
+    for (let el of elsT) {
+        if (el.dataset.parentid == elp_id) {
+            if (el.dataset.parentparentid == '0') {
+                close_children_balance(document.querySelector('[id="' + el.id + 'c"]'));
+            }
+            el.style.display = "none";
+        }
+    }
+    t.style.display = "none";
+    at = document.querySelector('[id="' + t.parentNode.parentNode.id + 'e"]');
+    at.style.display = "";
+}
+
+</script>
+{% endblock %}
+
+{% block content %}
+<h1 style="height: 27px;">{{title}}</h1>
+<p style="height: 24px; margin-block-start: 18px; margin-block-end: 18px;">
+<a href="{% url 'balances_recalculation' budget_id request.get_full_path %}"><input type="button" value="Пересчитать остатки"></a>{% if is_plan_editable %} <a href="{% url 'autoplanning_budget' budget_id budget_year_selected request.get_full_path %}"><input type="button" value="Заполнить план автоматически"></a>{% endif %}
+</p>
+<table class="table-budget">
+    <tr>
+        <th> </th>
+        <th>№</th>
+        <th> </th>
+        <th>СТАТЬЯ</th>
+        <th>ПЛАН</th>
+        <th {% if calculate_month == 12 %} style="display:none;" {% endif %}>ПЛАН&nbsp;{{ calculate_month }}&nbsp;М.</th>
+        <th> </th>
+        <th>ФАКТ</th>
+        <th>%&nbsp;ИСП</th>
+        <th>СРЕДНЕЕ</th>
+        {% for m in 12|create_range:1 %}
+        <th>ПЛАН&nbsp;{{ m }}</th>
+        {% endfor %}
+    </tr>
+
+    {% get_value_from_dict budget_items 'opening_balance' as balance_items %}
+    {% for bal_id, bal_dict in balance_items.items %}
+        {% get_value_from_dict bal_dict 'item' as bal_item %}
+        {% get_value_from_dict bal_dict 'name' as bal_name %}
+        {% get_value_from_dict bal_dict 'parent_parent_id' as bal_parent_parent_id %}
+        {% get_value_from_dict bal_dict 'parent_id' as bal_parent_id %}
+        {% get_value_from_dict bal_dict 'is_empty' as bal_is_empty %}
+        {% get_value_from_dict bal_dict 'values' as bal_values %}
+        {% get_value_from_dict bal_values 'year' 'planned_balance' as bal_year_planned_balance %}
+        {% get_value_from_dict bal_values 'year' 'current_plan' as bal_year_current_plan %}
+        {% get_value_from_dict bal_values 'year' 'actual_balance' as bal_year_actual_balance %}
+        {% get_bal_node_id 'opening_balance' bal_id bal_parent_id bal_parent_parent_id as bal_node_id %}
+    <tr id="{{ bal_node_id }}" class="{% if bal_parent_parent_id %}lvl4{% elif bal_parent_id %}lvl3{% elif bal_id %}lvl2{% else %}lvl1{% endif %}" style="{% if bal_id or bal_is_empty %}display:none;{% endif %}" data-id="{{ bal_id }}" data-parentid="{{ bal_parent_id }}" data-parentparentid="{{ bal_parent_parent_id }}">
+        <td>{% if not bal_parent_parent_id %}<img id="{{ bal_node_id }}e" {% if bal_parent_id %}src="{% static 'main/images/tr-right-3.png' %}"{% elif bal_id %}src="{% static 'main/images/tr-right-2.png' %}"{% else %}src="{% static 'main/images/tr-right.png' %}"{% endif %} style="max-height:8px;" onclick="expand_children_balance(this)"><img id="{{ bal_node_id }}c" {% if bal_parent_id %}src="{% static 'main/images/tr-down-3.png' %}"{% elif bal_id %}src="{% static 'main/images/tr-down-2.png' %}"{% else %}src="{% static 'main/images/tr-down.png' %}"{% endif %} style="max-height:8px; display:none;" onclick="close_children_balance(this)">{% endif %}</td>
+        <td>{{ bal_item }}</td>
+        <td></td>
+        <td>{% autoescape off %}{% strong_str bal_name %}{% endautoescape %}</td>
+        <td id="{{ bal_node_id }}-planned-year" data-val="{{ bal_year_planned_balance }}">{% if bal_id == 0 %}{{ bal_year_planned_balance|floatformat:"2g" }}{% endif %}</td>
+        <td id="{{ bal_node_id }}-current_plan-year" data-val="{{ bal_year_current_plan }}" {% if calculate_month == 12 %} style="display:none;" {% endif %}>{% if bal_id == 0 %}{{ bal_year_current_plan|floatformat:"2g" }}{% endif %}</td>
+        <td></td>
+        <td id="{{ bal_node_id }}-actual-year" data-val="{{ bal_year_actual_balance }}">{{ bal_year_actual_balance|floatformat:"2g" }}</td>
+        <td id="{{ bal_node_id }}-percentage-year"></td>
+        <td id="{{ bal_node_id }}-average-year"></td>
+        {% for m in 12|create_range:1 %}
+            {% get_value_from_dict bal_values m 'planned_balance' as bal_month_planned_balance %}
+        <td id="{{ bal_node_id }}-planned-{{ m }}" data-val="{{ bal_month_planned_balance }}" data-month="{{ m }}">{% if bal_id == 0 %}{{ bal_month_planned_balance|floatformat:"2g" }}{% endif %}</td>
+        {% endfor %}
+    </tr>
+        {% endfor %}
+
+    {% for d, dir in dir_dict.items %}
+        {% if dir == 'inc' %} 
+            {% get_value_from_dict budget_items 'income_items' as b_items %}
+        {% else %}
+            {% get_value_from_dict budget_items 'expenditure_items' as b_items %}
+        {% endif %}
+        {% for cat_id, cat_dict in b_items.items %}
+            {% get_value_from_dict cat_dict 'item' as cat_item %}
+            {% get_value_from_dict cat_dict 'name' as cat_name %}
+            {% get_value_from_dict cat_dict 'parent_id' as cat_parent_id %}
+            {% get_value_from_dict cat_dict 'is_empty' as cat_is_empty %}
+            {% get_value_from_dict cat_dict 'hidden_children' as cat_hidden_children %}
+            {% get_value_from_dict cat_dict 'values' as cat_values %}
+            {% get_value_from_dict cat_values 'year' 'all' 'planned_value' as cat_year_all_planned_value %}
+            {% get_value_from_dict cat_values 'year' 'all' 'current_plan' as cat_year_all_current_plan %}
+            {% get_value_from_dict cat_values 'year' 'all' 'actual_value' as cat_year_all_actual_value %}
+            {% get_value_from_dict cat_values 'year' 'all' 'execution_percentage' as cat_year_all_execution_percentage %}
+            {% get_value_from_dict cat_values 'year' 'all' 'average_value' as cat_year_all_average_value %}
+            {% get_value_from_dict cat_values 'year' 'non_project' 'planned_value' as cat_year_non_project_planned_value %}
+            {% get_value_from_dict cat_values 'year' 'non_project' 'current_plan' as cat_year_non_project_current_plan %}
+            {% get_value_from_dict cat_values 'year' 'non_project' 'actual_value' as cat_year_non_project_actual_value %}
+            {% get_value_from_dict cat_values 'year' 'non_project' 'execution_percentage' as cat_year_non_project_execution_percentage %}
+            {% get_value_from_dict cat_values 'year' 'non_project' 'average_value' as cat_year_non_project_average_value %}
+            {% get_value_from_dict cat_values 'year' 'project' 'planned_value' as cat_year_project_planned_value %}
+            {% get_value_from_dict cat_values 'year' 'project' 'current_plan' as cat_year_project_current_plan %}
+            {% get_value_from_dict cat_values 'year' 'project' 'actual_value' as cat_year_project_actual_value %}
+            {% get_value_from_dict cat_values 'year' 'project' 'execution_percentage' as cat_year_project_execution_percentage %}
+            {% get_value_from_dict cat_values 'year' 'project' 'average_value' as cat_year_project_average_value %}
+            {% get_value_from_dict cat_values 'year' 'projects' as cat_year_projects %}
+            {% get_node_id dir cat_id cat_parent_id as node_id %}
+    <tr id="{{ node_id }}" class="{% if cat_id == 0 %}lvl1{% elif cat_parent_id == 0 %}lvl2{% else %}lvl3{% endif %}" style="{% if cat_id != 0 and cat_parent_id != 0 or cat_is_empty %}display:none;{% endif %}{% if dir == 'inc' %} color: #005988;{% else %} color: #882500;{% endif %}" data-id="{{ cat_id }}" data-parentid="{{ cat_parent_id }}" data-budgetid="{{ budget_id }}" data-dir="{{ dir }}" data-type="all" data-year="{{ budget_year_selected }}" data-isempty="{{ cat_is_empty }}">
+        <td>{% if cat_id != 0 and cat_parent_id == 0 %}<img id="{{ node_id }}e" src="{% static 'main/images/tr-right.png' %}" style="max-height:8px;{% if cat_is_empty %} display:none;{% endif %}" onclick="expand_children_category(this)"><img id="{{ node_id }}c" src="{% static 'main/images/tr-down.png' %}" style="max-height:8px;{% if not cat_is_empty %} display:none;{% endif %}" onclick="close_children_category(this)">{% endif %}</td>
+        <td>{{cat_item}}</td>
+        <td><img id="{{ node_id }}ee" src="{% if cat_year_project_actual_value or cat_year_project_planned_value %}{% static 'main/images/tr-right.png' %}{% else %}{% static 'main/images/tr-right-light.png' %}{% endif %}" style="max-height:8px" onclick="expand_children_item(this)"><img id="{{ node_id }}cc" src="{% if cat_year_project_actual_value or cat_year_project_planned_value %}{% static 'main/images/tr-down.png' %}{% else %}{% static 'main/images/tr-down-light.png' %}{% endif %}" style="max-height:8px; display:none;" onclick="close_children_item(this)"></td>
+        <td>{% autoescape off %}{% strong_str cat_name %}{% endautoescape %}
+            {% if is_plan_editable and cat_parent_id == 0 and cat_hidden_children %}
+            <img id="{{ node_id }}sel" src="{% static 'main/images/plus.png' %}" style="max-height:8px;{% if cat_id != 0 and not cat_is_empty %} display:none;{% endif %}" onclick="{% if cat_id == 0 %}show_select_parent_category(this){% else %}show_select_category(this){% endif %}" alt="Добавить категорию для плана" title="Добавить категорию для плана">
+            <span id="{{ node_id }}psel" class="cell-select-form" style="display:none">
+                <form name="{{ node_id }}fsel" style="display: inline-flex;" method="post" onsubmit="{% if cat_id == 0 %}post_enter_select_parent_category(this){% else %}post_enter_select_category(this){% endif %};return false;">
+                    <select id="{{ node_id }}nsel" class="select-form">
+                        {% for cat_hidden_id, cat_hidden_name in cat_hidden_children.items %}<option value="{{ cat_hidden_id }}">{{ cat_hidden_name }}</option>
+                        {% endfor %}
+                    </select>
+                    <img id="{{ node_id }}nsel-ok" src="{% static 'main/images/ok.png' %}" style="max-height:16px" onclick="{% if cat_id == 0 %}post_select_parent_category(this){% else %}post_select_category(this){% endif %}">
+                    <img id="{{ node_id }}nsel-cancel" src="{% static 'main/images/cancel.png' %}" style="max-height:16px" onclick="{% if cat_id == 0 %}hide_select_parent_category(this){% else %}hide_select_category(this){% endif %}">
+                </form>
+            </span>
+            {% endif %}
+        </td>
+        <td id="{{ node_id }}-planned-all-year"><span id="{{ node_id }}-planned-all-year-view" data-val="{{ cat_year_all_planned_value }}">{{ cat_year_all_planned_value|floatformat:"2g" }}</span></td>
+        <td id="{{ node_id }}-current_plan-all-year" data-val="{{ cat_year_all_current_plan }}" {% if calculate_month == 12 %}style="display:none;"{% endif %}>{{ cat_year_all_current_plan|floatformat:"2g" }}</td>
+        <td></td>
+        <td id="{{ node_id }}-actual-all-year" data-val="{{ cat_year_all_actual_value }}">{{ cat_year_all_actual_value|floatformat:"2g" }}</td>
+        <td id="{{ node_id }}-percentage-all-year" data-val="{{ cat_year_all_execution_percentage }}">{{ cat_year_all_execution_percentage|multiply:100|floatformat:"2g" }}%</td>
+        <td id="{{ node_id }}-average-all-year" data-val="{{ cat_year_all_average_value }}">{{ cat_year_all_average_value|floatformat:"2g" }}</td>
+            {% for m in 12|create_range:1 %}
+                {% get_value_from_dict cat_values m 'all' 'planned_value' as cat_month_all_planned_value %}
+        <td id="{{ node_id }}-planned-all-{{ m }}"><span id="{{ node_id }}-planned-all-{{ m }}-view" data-val="{{ cat_month_all_planned_value }}" data-month="{{ m }}"{% if is_plan_editable and cat_id != 0 and cat_parent_id != 0 and cat_id != ped_cat and cat_id != ned_cat %} class="cell-link" onclick="show_plan_form(this)"{% endif %}>{{ cat_month_all_planned_value|floatformat:"2g" }}</span></td>
+            {% endfor %}
+    </tr>
+    
+    <tr id="{{ node_id }}np" class="{% if cat_id == 0 %}lvl3{% else %}lvl4{% endif %}" style="display:none;{% if dir == 'inc' %} color: #005988;{% else %} color: #882500;{% endif %}" data-id="{{ cat_id }}" data-parentid="{{ cat_parent_id }}" data-budgetid="{{ budget_id }}" data-dir="{{ dir }}" data-type="non-project" data-year="{{ budget_year_selected }}">
+        <td></td>
+        <td></td>
+        <td></td>
+        <td>-текущие</td>
+        <td id="{{ node_id }}-planned-non-project-year"><span id="{{ node_id }}-planned-non-project-year-view" data-val="{{ cat_year_non_project_planned_value }}">{{ cat_year_non_project_planned_value|floatformat:"2g" }}</span></td>
+        <td id="{{ node_id }}-current_plan-non-project-year" data-val="{{ cat_year_non_project_current_plan }}" {% if calculate_month == 12 %} style="display:none;" {% endif %}>{{ cat_year_non_project_current_plan|floatformat:"2g" }}</td>
+        <td></td>
+        <td id="{{ node_id }}-actual-non-project-year" data-val="{{ cat_year_non_project_actual_value }}">{{ cat_year_non_project_actual_value|floatformat:"2g" }}</td>
+        <td id="{{ node_id }}-percentage-non-project-year" data-val="{{ cat_year_non_project_execution_percentage }}">{{ cat_year_non_project_execution_percentage|multiply:100|floatformat:"2g" }}%</td>
+        <td id="{{ node_id }}-average-non-project-year" data-val="{{ cat_year_non_project_average_value }}">{{ cat_year_non_project_average_value|floatformat:"2g" }}</td>
+            {% for m in 12|create_range:1 %}
+                {% get_value_from_dict cat_values m 'non_project' 'planned_value' as cat_month_non_project_planned_value %}
+        <td id="{{ node_id }}-planned-non-project-{{ m }}"><span id="{{ node_id }}-planned-non-project-{{ m }}-view" data-val="{{ cat_month_non_project_planned_value }}" data-month="{{ m }}"{% if is_plan_editable and cat_id != 0 and cat_parent_id != 0 and cat_id != ped_cat and cat_id != ned_cat %} class="cell-link" onclick="show_plan_form(this)"{% endif %}>{{ cat_month_non_project_planned_value|floatformat:"2g" }}</span></td>
+            {% endfor %}
+    </tr>
+    
+    <tr id="{{ node_id }}p" class="{% if cat_id == 0 %}lvl3{% else %}lvl4{% endif %}" style="display:none;{% if dir == 'inc' %} color: #005988;{% else %} color: #882500;{% endif %}" data-id="{{ cat_id }}" data-parentid="{{ cat_parent_id }}" data-budgetid="{{ budget_id }}" data-dir="{{ dir }}" data-type="project" data-year="{{ budget_year_selected }}">
+        <td></td>
+        <td></td>
+        <td></td>
+        <td>-проектные</td>
+        <td id="{{ node_id }}-planned-project-year"><span id="{{ node_id }}-planned-project-year-view" data-val="{{ cat_year_project_planned_value }}">{{ cat_year_project_planned_value|floatformat:"2g" }}</span></td>
+        <td id="{{ node_id }}-current_plan-project-year" data-val="{{ cat_year_project_current_plan }}" {% if calculate_month == 12 %} style="display:none;" {% endif %}>{{ cat_year_project_current_plan|floatformat:"2g" }}</td>
+        <td>{% if cat_year_projects %}<img id="{{ node_id }}pe" src="{% static 'main/images/tr-right.png' %}" style="max-height:8px" onclick="expand_project(this)"><img id="{{ node_id }}pc" src="{% static 'main/images/tr-down.png' %}" style="max-height:8px; display:none;" onclick="close_project(this)">{% endif %}</td>
+        <td id="{{ node_id }}-actual-project-year" data-val="{{ cat_year_project_actual_value }}">{{ cat_year_project_actual_value|floatformat:"2g" }}{% if cat_year_projects %}
+            <p id="{{ node_id }}pp" style="margin: 0px; display:none">
+                {% for pr_id, pr_dict in cat_year_projects.items %}
+                    {% get_value_from_dict pr_dict 'name' as pr_name %}
+                    {% get_value_from_dict pr_dict 'actual_value' as pr_actual_value %}
+                    {% autoescape off %}{% strong_str pr_name %}:&nbsp;{% strong_str pr_actual_value|floatformat:"2g" %}{% endautoescape %}<br>
+                {% endfor %}
+            </p>{% endif %}
+        </td>
+        <td id="{{ node_id }}-percentage-project-year" data-val="{{ cat_year_project_execution_percentage }}">{{ cat_year_project_execution_percentage|multiply:100|floatformat:"2g" }}%</td>
+        <td id="{{ node_id }}-average-project-year" data-val="{{ cat_year_project_average_value }}">{{ cat_year_project_average_value|floatformat:"2g" }}</td>
+            {% for m in 12|create_range:1 %}
+                {% get_value_from_dict cat_values m 'project' 'planned_value' as cat_month_project_planned_value %}
+        <td id="{{ node_id }}-planned-project-{{ m }}"><span id="{{ node_id }}-planned-project-{{ m }}-view" data-val="{{ cat_month_project_planned_value }}" data-month="{{ m }}"{% if is_plan_editable and cat_id != 0 and cat_parent_id != 0 and cat_id != ped_cat and cat_id != ned_cat %} class="cell-link" onclick="show_plan_form(this)"{% endif %}>{{ cat_month_project_planned_value|floatformat:"2g" }}</span></td>
+            {% endfor %}
+    </tr>
+        {% endfor %}
+    {% endfor %}
+
+    {% get_value_from_dict budget_items 'closing_balance' as balance_items %}
+    {% for bal_id, bal_dict in balance_items.items %}
+        {% get_value_from_dict bal_dict 'item' as bal_item %}
+        {% get_value_from_dict bal_dict 'name' as bal_name %}
+        {% get_value_from_dict bal_dict 'parent_parent_id' as bal_parent_parent_id %}
+        {% get_value_from_dict bal_dict 'parent_id' as bal_parent_id %}
+        {% get_value_from_dict bal_dict 'is_empty' as bal_is_empty %}
+        {% get_value_from_dict bal_dict 'values' as bal_values %}
+        {% get_value_from_dict bal_values 'year' 'planned_balance' as bal_year_planned_balance %}
+        {% get_value_from_dict bal_values 'year' 'current_plan' as bal_year_current_plan %}
+        {% get_value_from_dict bal_values 'year' 'actual_balance' as bal_year_actual_balance %}
+        {% get_value_from_dict bal_values 'year' 'execution_percentage' as bal_year_execution_percentage %}
+        {% get_value_from_dict bal_values 'year' 'average_balance' as bal_year_average_balance %}
+        {% get_bal_node_id 'closing_balance' bal_id bal_parent_id bal_parent_parent_id as bal_node_id %}
+    <tr id="{{ bal_node_id }}" class="{% if bal_parent_parent_id %}lvl4{% elif bal_parent_id %}lvl3{% elif bal_id %}lvl2{% else %}lvl1{% endif %}" style="{% if bal_id or bal_is_empty %}display:none;{% endif %}" data-id="{{ bal_id }}" data-parentid="{{ bal_parent_id }}" data-parentparentid="{{ bal_parent_parent_id }}">
+        <td>{% if not bal_parent_parent_id %}<img id="{{ bal_node_id }}e" {% if bal_parent_id %}src="{% static 'main/images/tr-right-3.png' %}"{% elif bal_id %}src="{% static 'main/images/tr-right-2.png' %}"{% else %}src="{% static 'main/images/tr-right.png' %}"{% endif %} style="max-height:8px;" onclick="expand_children_balance(this)"><img id="{{ bal_node_id }}c" {% if bal_parent_id %}src="{% static 'main/images/tr-down-3.png' %}"{% elif bal_id %}src="{% static 'main/images/tr-down-2.png' %}"{% else %}src="{% static 'main/images/tr-down.png' %}"{% endif %} style="max-height:8px; display:none;" onclick="close_children_balance(this)">{% endif %}</td>
+        <td>{{ bal_item }}</td>
+        <td></td>
+        <td>{% autoescape off %}{% strong_str bal_name %}{% endautoescape %}</td>
+        <td id="{{ bal_node_id }}-planned-year" data-val="{{ bal_year_planned_balance }}">{% if bal_id == 0 %}{{ bal_year_planned_balance|floatformat:"2g" }}{% endif %}</td>
+        <td id="{{ bal_node_id }}-current_plan-year" data-val="{{ bal_year_current_plan }}" {% if calculate_month == 12 %} style="display:none;" {% endif %}>{% if bal_id == 0 %}{{ bal_year_current_plan|floatformat:"2g" }}{% endif %}</td>
+        <td></td>
+        <td id="{{ bal_node_id }}-actual-year" data-val="{{ bal_year_actual_balance }}">{{ bal_year_actual_balance|floatformat:"2g" }}</td>
+        <td id="{{ bal_node_id }}-percentage-year" data-val="{{ bal_year_execution_percentage }}">{% if bal_id == 0 %}{{ bal_year_execution_percentage|multiply:100|floatformat:"2g" }}%{% endif %}</td>
+        <td id="{{ bal_node_id }}-average-year" data-val="{{ bal_year_average_balance }}">{% if bal_id == 0 %}{{ bal_year_average_balance|floatformat:"2g" }}{% endif %}</td>
+        {% for m in 12|create_range:1 %}
+            {% get_value_from_dict bal_values m 'planned_balance' as bal_month_planned_balance %}
+        <td id="{{ bal_node_id }}-planned-{{ m }}" data-val="{{ bal_month_planned_balance }}" data-month="{{ m }}">{% if bal_id == 0 %}{{ bal_month_planned_balance|floatformat:"2g" }}{% endif %}</td>
+        {% endfor %}
+    </tr>
+        {% endfor %}
+
+    {% get_value_from_dict budget_items 'difference' as difference %}
+    {% get_value_from_dict difference 'item' as dif_item %}
+    {% get_value_from_dict difference 'name' as dif_name %}
+    {% get_value_from_dict difference 'values' as dif_values %}
+    {% get_value_from_dict dif_values 'year' 'all' 'planned_value' as dif_year_all_planned_value %}
+    {% get_value_from_dict dif_values 'year' 'all' 'current_plan' as dif_year_all_current_plan %}
+    {% get_value_from_dict dif_values 'year' 'all' 'actual_value' as dif_year_all_actual_value %}
+    {% get_value_from_dict dif_values 'year' 'all' 'execution_percentage' as dif_year_all_execution_percentage %}
+    {% get_value_from_dict dif_values 'year' 'all' 'average_value' as dif_year_all_average_value %}
+    {% get_value_from_dict dif_values 'year' 'non_project' 'planned_value' as dif_year_non_project_planned_value %}
+    {% get_value_from_dict dif_values 'year' 'non_project' 'current_plan' as dif_year_non_project_current_plan %}
+    {% get_value_from_dict dif_values 'year' 'non_project' 'actual_value' as dif_year_non_project_actual_value %}
+    {% get_value_from_dict dif_values 'year' 'non_project' 'execution_percentage' as dif_year_non_project_execution_percentage %}
+    {% get_value_from_dict dif_values 'year' 'non_project' 'average_value' as dif_year_non_project_average_value %}
+    {% get_value_from_dict dif_values 'year' 'project' 'planned_value' as dif_year_project_planned_value %}
+    {% get_value_from_dict dif_values 'year' 'project' 'current_plan' as dif_year_project_current_plan %}
+    {% get_value_from_dict dif_values 'year' 'project' 'actual_value' as dif_year_project_actual_value %}
+    {% get_value_from_dict dif_values 'year' 'project' 'execution_percentage' as dif_year_project_execution_percentage %}
+    {% get_value_from_dict dif_values 'year' 'project' 'average_value' as dif_year_project_average_value %}
+    <tr id="dif" class="lvl1">
+        <td></td>
+        <td>{{dif_item}}</td>
+        <td><img id="difee" src="{% if dif_year_project_actual_value %}{% static 'main/images/tr-right.png' %}{% else %}{% static 'main/images/tr-right-light.png' %}{% endif %}" style="max-height:8px" onclick="expand_children_item(this)"><img id="difcc" src="{% if dif_year_project_actual_value %}{% static 'main/images/tr-down.png' %}{% else %}{% static 'main/images/tr-down-light.png' %}{% endif %}" style="max-height:8px; display:none;" onclick="close_children_item(this)"></td>
+        <td>{% autoescape off %}{% strong_str dif_name %}{% endautoescape %}</td>
+        <td id="dif-planned-all-year"><span id="dif-planned-all-year-view" data-val="{{ dif_year_all_planned_value }}">{{ dif_year_all_planned_value|floatformat:"2g" }}</span></td>
+        <td id="dif-current_plan-all-year" data-val="{{ dif_year_all_current_plan }}" {% if calculate_month == 12 %}style="display:none;"{% endif %}>{{ dif_year_all_current_plan|floatformat:"2g" }}</td>
+        <td></td>
+        <td id="dif-actual-all-year" data-val="{{ dif_year_all_actual_value }}">{{ dif_year_all_actual_value|floatformat:"2g" }}</td>
+        <td id="dif-percentage-all-year" data-val="{{ dif_year_all_execution_percentage }}">{{ dif_year_all_execution_percentage|multiply:100|floatformat:"2g" }}%</td>
+        <td id="dif-average-all-year" data-val="{{ dif_year_all_average_value }}">{{ dif_year_all_average_value|floatformat:"2g" }}</td>
+            {% for m in 12|create_range:1 %}
+                {% get_value_from_dict dif_values m 'all' 'planned_value' as dif_month_all_planned_value %}
+        <td id="dif-planned-all-{{ m }}"><span id="dif-planned-all-{{ m }}-view" data-val="{{ dif_month_all_planned_value }}" data-month="{{ m }}">{{ dif_month_all_planned_value|floatformat:"2g" }}</span></td>
+            {% endfor %}
+    </tr>
+    
+    <tr id="difnp" class="lvl3" style="display:none;">
+        <td></td>
+        <td></td>
+        <td></td>
+        <td>-текущие</td>
+        <td id="dif-planned-non-project-year"><span id="dif-planned-non-project-year-view" data-val="{{ dif_year_non_project_planned_value }}">{{ dif_year_non_project_planned_value|floatformat:"2g" }}</span></td>
+        <td id="dif-current_plan-non-project-year" data-val="{{ dif_year_non_project_current_plan }}" {% if calculate_month == 12 %} style="display:none;" {% endif %}>{{ dif_year_non_project_current_plan|floatformat:"2g" }}</td>
+        <td></td>
+        <td id="dif-actual-non-project-year" data-val="{{ dif_year_non_project_actual_value }}">{{ dif_year_non_project_actual_value|floatformat:"2g" }}</td>
+        <td id="dif-percentage-non-project-year" data-val="{{ dif_year_non_project_execution_percentage }}">{{ dif_year_non_project_execution_percentage|multiply:100|floatformat:"2g" }}%</td>
+        <td id="dif-average-non-project-year" data-val="{{ dif_year_non_project_average_value }}">{{ dif_year_non_project_average_value|floatformat:"2g" }}</td>
+            {% for m in 12|create_range:1 %}
+                {% get_value_from_dict dif_values m 'non_project' 'planned_value' as dif_month_non_project_planned_value %}
+        <td id="dif-planned-non-project-{{ m }}"><span id="dif-planned-non-project-{{ m }}-view" data-val="{{ dif_month_non_project_planned_value }}" data-month="{{ m }}">{{ dif_month_non_project_planned_value|floatformat:"2g" }}</span></td>
+            {% endfor %}
+    </tr>
+    
+    <tr id="difp" class="lvl3" style="display:none;">
+        <td></td>
+        <td></td>
+        <td></td>
+        <td>-проектные</td>
+        <td id="dif-planned-project-year"><span id="dif-planned-project-year-view" data-val="{{ dif_year_project_planned_value }}">{{ dif_year_project_planned_value|floatformat:"2g" }}</span></td>
+        <td id="dif-current_plan-project-year" data-val="{{ dif_year_project_current_plan }}" {% if calculate_month == 12 %} style="display:none;" {% endif %}>{{ dif_year_project_current_plan|floatformat:"2g" }}</td>
+        <td></td>
+        <td id="dif-actual-project-year" data-val="{{ dif_year_project_actual_value }}">{{ dif_year_project_actual_value|floatformat:"2g" }}</td>
+        <td id="dif-percentage-project-year" data-val="{{ dif_year_project_execution_percentage }}">{{ dif_year_project_execution_percentage|multiply:100|floatformat:"2g" }}%</td>
+        <td id="dif-average-project-year" data-val="{{ dif_year_project_average_value }}">{{ dif_year_project_average_value|floatformat:"2g" }}</td>
+            {% for m in 12|create_range:1 %}
+                {% get_value_from_dict dif_values m 'project' 'planned_value' as dif_month_project_planned_value %}
+        <td id="dif-planned-project-{{ m }}"><span id="dif-planned-project-{{ m }}-view" data-val="{{ dif_month_project_planned_value }}" data-month="{{ m }}">{{ dif_month_project_planned_value|floatformat:"2g" }}</span></td>
+            {% endfor %}
+    </tr>
+
+</table>
+{% endblock %}

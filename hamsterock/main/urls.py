@@ -50,4 +50,8 @@ urlpatterns = [
     path('account_transactions_without_join/<int:budget_id>/<path:return_url>/', account_transactions_without_join,
          name='account_transactions_without_join'),
     path('load_transactions/<int:account_id>/<path:return_url>/', load_transactions, name='load_transactions'),
+    path('annual_budget/<int:year>/<int:currency_id>/', annual_budget, name='annual_budget'),
+    path('edit_budget_register/', edit_budget_register, name='edit_budget_register'),
+    path('autoplanning_budget/<int:budget_id>/<int:budget_year>/<path:return_url>/', autoplanning_budget,
+         name='autoplanning_budget'),
 ]

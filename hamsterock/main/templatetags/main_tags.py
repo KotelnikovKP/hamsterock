@@ -33,6 +33,8 @@ def show_main_menu(is_authenticated=False, username='', is_staff=None, avatar=No
                             ]
                     menu = [{'title': "Счета и операции", 'url_name': 'account_transactions',
                              'url_suffix': first_account},
+                            {'title': "Годовой бюджет", 'url_name': 'annual_budget', 'url_suffix': first_budget_year,
+                             'url_suffix_2': first_base_currency},
                             {'title': "Настройки бюджета", 'url_name': 'edit_budget'},
                             {'title': "О сервисе", 'url_name': 'about'},
                             ]
@@ -47,6 +49,8 @@ def show_main_menu(is_authenticated=False, username='', is_staff=None, avatar=No
                             ]
                     menu = [{'title': "Счета и операции", 'url_name': 'account_transactions',
                              'url_suffix': first_account},
+                            {'title': "Годовой бюджет", 'url_name': 'annual_budget', 'url_suffix': first_budget_year,
+                             'url_suffix_2': first_base_currency},
                             {'title': "О сервисе", 'url_name': 'about'},
                             ]
         else:

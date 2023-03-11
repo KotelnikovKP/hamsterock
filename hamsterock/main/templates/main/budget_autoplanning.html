@@ -1,0 +1,25 @@
+{% extends 'main/base.html' %}
+
+{% block content %}
+<h1>{{title}}</h1>
+<p>
+    <label class="form-label" style="min-width: 100px" for="id_budget_year">Бюджет для планирования: </label>
+    <input id="id_budget_year" type="text" name="budget_year" value="{{ budget_year }}" class="form-input-small" readonly>&ensp;
+    <label class="form-label" style="min-width: 100px" for="id_giving_year">Бюджет факта: </label>
+    <input id="id_giving_year" type="text" name="giving_year" value="{{ giving_year }}" class="form-input-small" readonly>&ensp;
+</p>
+<form method="post">
+    {% csrf_token %}
+
+    <div class="form-error">{{ form.non_field_errors }}</div>
+
+    {% for f in form %}
+    <p class="form-p"><label class="form-label" for="{{ f.id_for_label }}">{{ f.label }}: </label>{{ f }}</p>
+    <div class="form-error">{{ f.errors }}</div>
+    {% endfor %}
+
+    <p> </p>
+    <button type="submit">Выполнить</button> <a href="{{ return_url }}"><input type="button" value="Отмена"></a>
+</form>
+
+{% endblock %}

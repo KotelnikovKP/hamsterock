@@ -918,3 +918,27 @@ class LoadTransactionForm(forms.Form):
                                        forms.ValidationError('Необходимо указать обязательное поле - ' + trf[1]))
 
         return result
+
+
+class AutoplanningBudgetForm(forms.Form):
+    plan_action = forms.ChoiceField(label='Действие',
+                                    widget=forms.Select(attrs={'class': 'form-input-large'}),
+                                    choices=[('fill_january', 'Заполнить план января средним фактом предыдущего года'),
+                                             ('copy_january_to_all_month', 'Скопировать план января '
+                                                                           'на все месяцы года'),
+                                             ('fill_all_month', 'Заполнить план всех месяцев '
+                                                                'средним фактом предыдущего года'),
+                                             ('delete', 'Удалить план')],
+                                    initial=1)
+    types_for_planning = forms.ChoiceField(label='Типы значений для планирования',
+                                           widget=forms.Select(attrs={'class': 'form-input-large'}),
+                                           choices=[('only_current', 'Только текущие доходы и расходы'),
+                                                    ('only_project', 'Только проектные доходы и расходы'),
+                                                    ('both', 'И текущие, и проектные доходы и расходы')],
+                                           initial=1)
+    clean_needed = forms.ChoiceField(label='Очистка текущих значений',
+                                     widget=forms.Select(attrs={'class': 'form-input-large'}),
+                                     choices=[('delete_first', 'Предварительно удалить плановые значения'),
+                                              ('not_delete', 'Перезаписать только те плановые значения, '
+                                                             'которые есть в факте предыдущего года')],
+                                     initial=1)

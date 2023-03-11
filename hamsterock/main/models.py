@@ -723,82 +723,80 @@ class Account(models.Model):
 
         super(Account, self).save(*args, **kwargs)
 
+    def get_balance_on_date(self, on_date=None):
+        """
+        Получение остатка по счету/кошельку на дату.
+        Возвращается истинный остаток по счету/кошельку - из последней транзакции, предшествующей указанной дате,
+        или при отсутствии таковой начальный остаток по счету/кошельку.
+        ВАЖНО!!! Остатки актуальны только после успешной отработки процедуры пересчета остатков.
+        :param self: объект счета/кошелька;
+        :param on_date: дата остатка;
+        :return: кортеж (остаток в валюте счета, остаток в базовой валюте, остаток в дополнительной валюте)
+        """
+        if not on_date:
+            return ftod(self.balance, 2), ftod(self.balance_base_cur_1, 2), ftod(self.balance_base_cur_2, 2)
 
-def get_balance_on_date(self, on_date=None):
-    """
-    Получение остатка по счету/кошельку на дату.
-    Возвращается истинный остаток по счету/кошельку - из последней транзакции, предшествующей указанной дате,
-    или при отсутствии таковой начальный остаток по счету/кошельку.
-    ВАЖНО!!! Остатки актуальны только после успешной отработки процедуры пересчета остатков.
-    :param self: объект счета/кошелька;
-    :param on_date: дата остатка;
-    :return: кортеж (остаток в валюте счета, остаток в базовой валюте, остаток в дополнительной валюте)
-    """
-    if not on_date:
-        return ftod(self.balance, 2), ftod(self.balance_base_cur_1, 2), ftod(self.balance_base_cur_2, 2)
-
-    previous_transactions = \
-        Transaction.objects.filter(budget_id=self.budget_id,
-                                   account_id=self.pk,
-                                   time_transaction__lt=datetime(on_date.year, on_date.month, on_date.day,
-                                                                 0, 0, 0, 0, timezone.utc),
-                                   ).order_by('-time_transaction')[:1]
-    if len(previous_transactions) > 0:
-        return ftod(previous_transactions[0].balance_acc_cur, 2), \
-               ftod(previous_transactions[0].balance_base_cur_1, 2), \
-               ftod(previous_transactions[0].balance_base_cur_2, 2)
-
-    on_date = on_date - timedelta(microseconds=1)
-
-    return ftod(self.initial_balance, 2), \
-        ftod(self.initial_balance *
-             CurrencyRate.get_rate(self.budget.base_currency_1, self.currency_id, on_date), 2), \
-        ftod(self.initial_balance *
-             CurrencyRate.get_rate(self.budget.base_currency_2, self.currency_id, on_date), 2)
-
-
-def get_budget_balance_on_date(self, on_date=None):
-    """
-    Получение балансового остатка по счету/кошельку на конец месяца указанной даты.
-    Возвращается остаток из бюджетных оборотов по счету/кошельку. Отличается от истинного остатка тем, что считается
-    не по операциям, совершенным в данном месяце (по дате операции), а по указанным в операциях бюджетным периодам,
-    которые могут не совпадать с датой операции. При отсутствии бюджетного оборота за месяц указанной даты,
-    берется первый предшествующий период, при отсутствии таковых берется начальный остаток.
-    В бюджете используются именно эти (бюджетные) остатки.
-    ВАЖНО!!! Остатки актуальны только после успешной отработки процедуры пересчета остатков.
-    :param self: объект счета/кошелька;
-    :param on_date: дата остатка;
-    :return: кортеж (остаток в валюте счета, остаток в базовой валюте, остаток в дополнительной валюте)
-    """
-    if not on_date:
-        return ftod(self.balance_base_cur_1, 2), ftod(self.balance_base_cur_2, 2)
-    try:
-        account_turnover = \
-            AccountTurnover.objects.get(budget_id=self.budget_id,
-                                        account_id=self.pk,
-                                        budget_period=datetime(on_date.year, on_date.month, 15,
-                                                               0, 0, 0, 0, timezone.utc)
-                                        )
-        return ftod(account_turnover.begin_balance_base_cur_1, 2), \
-            ftod(account_turnover.begin_balance_base_cur_2, 2)
-    except Exception as e:
-        pass
-    account_turnovers = \
-        AccountTurnover.objects.filter(budget_id=self.budget_id,
+        previous_transactions = \
+            Transaction.objects.filter(budget_id=self.budget_id,
                                        account_id=self.pk,
-                                       budget_period__lt=datetime(on_date.year, on_date.month, 15,
-                                                                  0, 0, 0, 0, timezone.utc)
-                                       ).order_by('-budget_period')[:1]
-    if len(account_turnovers) > 0:
-        return ftod(account_turnovers[0].end_balance_base_cur_1, 2), \
-               ftod(account_turnovers[0].end_balance_base_cur_2, 2)
+                                       time_transaction__lt=datetime(on_date.year, on_date.month, on_date.day,
+                                                                     0, 0, 0, 0, timezone.utc),
+                                       ).order_by('-time_transaction')[:1]
+        if len(previous_transactions) > 0:
+            return ftod(previous_transactions[0].balance_acc_cur, 2), \
+                   ftod(previous_transactions[0].balance_base_cur_1, 2), \
+                   ftod(previous_transactions[0].balance_base_cur_2, 2)
 
-    on_date = on_date - timedelta(microseconds=1)
+        on_date = on_date - timedelta(microseconds=1)
 
-    return ftod(self.initial_balance *
-                CurrencyRate.get_rate(self.budget.base_currency_1, self.currency_id, on_date), 2), \
-        ftod(self.initial_balance *
-             CurrencyRate.get_rate(self.budget.base_currency_2, self.currency_id, on_date), 2)
+        return ftod(self.initial_balance, 2), \
+            ftod(self.initial_balance *
+                 CurrencyRate.get_rate(self.budget.base_currency_1, self.currency_id, on_date), 2), \
+            ftod(self.initial_balance *
+                 CurrencyRate.get_rate(self.budget.base_currency_2, self.currency_id, on_date), 2)
+
+    def get_budget_balance_on_date(self, on_date=None):
+        """
+        Получение балансового остатка по счету/кошельку на конец месяца указанной даты.
+        Возвращается остаток из бюджетных оборотов по счету/кошельку. Отличается от истинного остатка тем, что считается
+        не по операциям, совершенным в данном месяце (по дате операции), а по указанным в операциях бюджетным периодам,
+        которые могут не совпадать с датой операции. При отсутствии бюджетного оборота за месяц указанной даты,
+        берется первый предшествующий период, при отсутствии таковых берется начальный остаток.
+        В бюджете используются именно эти (бюджетные) остатки.
+        ВАЖНО!!! Остатки актуальны только после успешной отработки процедуры пересчета остатков.
+        :param self: объект счета/кошелька;
+        :param on_date: дата остатка;
+        :return: кортеж (остаток в валюте счета, остаток в базовой валюте, остаток в дополнительной валюте)
+        """
+        if not on_date:
+            return ftod(self.balance_base_cur_1, 2), ftod(self.balance_base_cur_2, 2)
+        try:
+            account_turnover = \
+                AccountTurnover.objects.get(budget_id=self.budget_id,
+                                            account_id=self.pk,
+                                            budget_period=datetime(on_date.year, on_date.month, 15,
+                                                                   0, 0, 0, 0, timezone.utc)
+                                            )
+            return ftod(account_turnover.begin_balance_base_cur_1, 2), \
+                ftod(account_turnover.begin_balance_base_cur_2, 2)
+        except Exception as e:
+            pass
+        account_turnovers = \
+            AccountTurnover.objects.filter(budget_id=self.budget_id,
+                                           account_id=self.pk,
+                                           budget_period__lt=datetime(on_date.year, on_date.month, 15,
+                                                                      0, 0, 0, 0, timezone.utc)
+                                           ).order_by('-budget_period')[:1]
+        if len(account_turnovers) > 0:
+            return ftod(account_turnovers[0].end_balance_base_cur_1, 2), \
+                   ftod(account_turnovers[0].end_balance_base_cur_2, 2)
+
+        on_date = on_date - timedelta(microseconds=1)
+
+        return ftod(self.initial_balance *
+                    CurrencyRate.get_rate(self.budget.base_currency_1, self.currency_id, on_date), 2), \
+            ftod(self.initial_balance *
+                 CurrencyRate.get_rate(self.budget.base_currency_2, self.currency_id, on_date), 2)
 
 
 class AccountTurnover(models.Model):
