@@ -49,4 +49,5 @@ urlpatterns = [
          name='balances_recalculation'),
     path('account_transactions_without_join/<int:budget_id>/<path:return_url>/', account_transactions_without_join,
          name='account_transactions_without_join'),
+    path('load_transactions/<int:account_id>/<path:return_url>/', load_transactions, name='load_transactions'),
 ]

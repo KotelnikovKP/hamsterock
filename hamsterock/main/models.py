@@ -202,6 +202,32 @@ NEGATIVE_EXCHANGE_DIFFERENCE = 16
 DEFAULT_INC_CATEGORY = 12
 DEFAULT_EXP_CATEGORY = 15
 
+TRANSACTION_FIELDS = [
+    (None, '<поле не задано>'),
+    ('time_transaction', 'Дата-время операции'),
+    ('amount_acc_cur', 'Сумма операции в валюте счета'),
+    ('movement_flag', 'Признак операции-перемещения'),
+    ('currency', 'Валюта операции'),
+    ('amount', 'Сумма операции'),
+    ('category', 'Категория операции'),
+    ('budget_object', 'Объект бюджета'),
+    ('project', 'Проект'),
+    ('budget_year', 'Год периода бюджета'),
+    ('budget_month', 'Месяц периода бюджета'),
+    ('bank_description', 'Описание операции от банка'),
+    ('bank_category', 'Категория операции от банка'),
+    ('mcc_code', 'MCC код от банка'),
+    ('place', 'Место совершения операции'),
+    ('description', 'Описание операции'),
+]
+
+TRANSACTION_REQUIRED_FIELDS = [
+    ('time_transaction', 'Дата-время операции'),
+    ('amount_acc_cur', 'Сумма операции в валюте счета'),
+    ('movement_flag', 'Признак операции-перемещения'),
+    ('category', 'Категория операции'),
+]
+
 
 class Profile(models.Model):
     """

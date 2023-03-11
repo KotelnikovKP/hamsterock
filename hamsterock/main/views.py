@@ -1,3 +1,5 @@
+import csv
+from io import StringIO
 from uuid import uuid4
 
 from django.contrib.auth import logout, login
@@ -2621,3 +2623,448 @@ def account_transactions_without_join(request, budget_id, return_url):
                                  'selected_menu': 'account_transactions',
                                  'return_url': return_url,
                                  }))
+
+
+@login_required
+def load_transactions(request, account_id, return_url):
+    """
+    Функция загрузки операций по счету из файла
+    """
+    if not request.user.is_authenticated:
+        return redirect('home')
+    if not (hasattr(request.user, 'profile') and request.user.profile.budget):
+        return redirect('home')
+
+    account = get_object_or_404(Account, pk=account_id)
+
+    if account.budget != request.user.profile.budget:
+        return HttpResponseForbidden("<h1>Доступ запрещен</h1>")
+
+    if return_url[0:1] != '/':
+        return_url = '/' + return_url
+
+    if request.method == 'POST':
+        form = LoadTransactionForm(account=account, data=request.POST, files=request.FILES)
+
+        if form.is_valid():
+            # Откроем скаченный файл
+            csv_file = StringIO(request.FILES['transactions_file'].read().decode('utf-8-sig'))
+
+            # Зададим начальный список полей в первую строку лога загрузки
+            transaction_loading_log = [['Статус', '№', 'Тип']]
+
+            # На основе открытого файла зададим итератор-словарь rows
+            if request.POST['are_field_headers'] == '1':
+                # Задаем csv итератор-словарь без указания заголовков
+                if request.POST['string_delimiter']:
+                    rows = csv.DictReader(csv_file,
+                                          restkey='another_fields',
+                                          restval=None,
+                                          delimiter=request.POST['column_delimiter'],
+                                          quotechar=request.POST['string_delimiter'])
+                else:
+                    rows = csv.DictReader(csv_file,
+                                          restkey='another_fields',
+                                          restval=None,
+                                          delimiter=request.POST['column_delimiter'])
+                is_need_check_headers = True
+                row_idx = 2
+            else:
+                # Задаем csv итератор-словарь с заголовками, указанными пользователем
+                headers = form.headers
+                if request.POST['string_delimiter']:
+                    rows = csv.DictReader(csv_file,
+                                          fieldnames=headers,
+                                          restkey='another_fields',
+                                          restval=None,
+                                          delimiter=request.POST['column_delimiter'],
+                                          quotechar=request.POST['string_delimiter'])
+                else:
+                    rows = csv.DictReader(csv_file,
+                                          fieldnames=headers,
+                                          restkey='another_fields',
+                                          restval=None,
+                                          delimiter=request.POST['column_delimiter'])
+                # Расширим первую строку лога заголовками полей, указанными пользователем
+                transaction_loading_log[0].extend(headers)
+                is_need_check_headers = False
+                row_idx = 1
+
+            is_error = False
+
+            # Получим форматы ввода даты-времени допустимые в данной локации и сформируем подсказку для ошибок
+            datetime_formats = formats.get_format("DATETIME_INPUT_FORMATS", lang=translation.get_language())
+            datetime_formats.append(datetime_formats[0][:8])
+            example_datetime = datetime.utcnow()
+            valid_datetime_formats = 'Допустимые форматы даты-времени:'
+            for datetime_format in datetime_formats:
+                valid_datetime_formats += f"<br>{datetime_format}: {example_datetime.strftime(datetime_format)}"
+
+            # Цикл по строкам (операциям)
+            for row in rows:
+                if is_need_check_headers:
+                    # Проверяем действительное наличие заголовков в части обязательных полей
+                    headers = row.keys()
+                    for trf in TRANSACTION_REQUIRED_FIELDS:
+                        if trf[0] not in headers:
+                            form.add_error('are_field_headers',
+                                           forms.ValidationError('В заголовках файла нет обязательного поля - ' +
+                                                                 trf[1] + ' (' + trf[0] + ')'))
+                            is_error = True
+                    if is_error:
+                        break
+                    is_need_check_headers = False
+                    # Расширим первую строку лога заголовками полей, полученными из первой строки файла
+                    transaction_loading_log[0].extend(headers)
+
+                # Добавим пустую строчку в лог, соответствующую строке файла
+                transaction_loading_log.append([None, row_idx, {}, {}])
+                log_idx = len(transaction_loading_log) - 1
+
+                # Вытаскиваем значения из строки файла, нормализуем их
+                # В случае ошибок взводим флаги ошибок для каждого поля, записываем в лог ошибку и подсказку
+
+                # 1. ОБЯЗАТЕЛЬНОЕ ПОЛЕ! Дата-время операции  - time_transaction
+                is_time_transaction_error = True
+                time_transaction_str = row.get('time_transaction', '')
+                time_transaction = None
+                time_zone = None
+                transaction_loading_log[log_idx][3]['time_transaction'] = {'value': time_transaction_str}
+                # Попробуем распарсить дату-время из файла допустимыми форматами в данной локации
+                for datetime_format in datetime_formats:
+                    try:
+                        time_transaction = datetime.strptime(time_transaction_str, datetime_format)
+                        time_zone = ftod(request.POST['transactions_time_zone'], 2)
+                        # Приводим дату-время к UTC
+                        if time_transaction.hour != 0 or time_transaction.minute != 0 or \
+                                time_transaction.second != 0 or time_transaction.microsecond != 0:
+                            time_transaction = time_transaction - timedelta(hours=float(time_zone))
+                        time_transaction = datetime(time_transaction.year,
+                                                    time_transaction.month,
+                                                    time_transaction.day,
+                                                    time_transaction.hour,
+                                                    time_transaction.minute,
+                                                    time_transaction.second,
+                                                    time_transaction.microsecond,
+                                                    timezone.utc)
+                        is_time_transaction_error = False
+                        break
+                    except Exception as e:
+                        pass
+                if is_time_transaction_error:
+                    transaction_loading_log[log_idx][3]['time_transaction']['error'] = 'ошибка формата даты-времени'
+                    transaction_loading_log[log_idx][3]['time_transaction']['tip'] = valid_datetime_formats
+                elif time_transaction < MIN_TRANSACTION_DATETIME or time_transaction > MAX_TRANSACTION_DATETIME:
+                    is_time_transaction_error = True
+                    time_transaction = None
+                    transaction_loading_log[log_idx][3]['time_transaction']['error'] = 'ошибка даты-времени'
+                    transaction_loading_log[log_idx][3]['time_transaction']['tip'] = \
+                        f"Допускаются даты в интервале<br>от {MIN_TRANSACTION_DATETIME}<br>" \
+                        f"до {MAX_TRANSACTION_DATETIME}"
+
+                # 2. ОБЯЗАТЕЛЬНОЕ ПОЛЕ! Сумма операции в валюте счета - amount_acc_cur
+                is_amount_acc_cur_error = False
+                amount_acc_cur_str = row.get('amount_acc_cur', '')
+                amount_acc_cur_str = amount_acc_cur_str.replace(' ', '')
+                amount_acc_cur_str = amount_acc_cur_str.replace(',', '.')
+                amount_acc_cur = None
+                transaction_loading_log[log_idx][3]['amount_acc_cur'] = {'value': amount_acc_cur_str}
+                try:
+                    amount_acc_cur = ftod(amount_acc_cur_str, 2)
+                except Exception as e:
+                    is_amount_acc_cur_error = True
+                    transaction_loading_log[log_idx][3]['amount_acc_cur']['error'] = 'ошибка значения суммы'
+                    transaction_loading_log[log_idx][3]['amount_acc_cur']['tip'] = 'Допускаются цифры, минус,<br>' \
+                                                                                   'точка или запятая'
+
+                # 3. ОБЯЗАТЕЛЬНОЕ ПОЛЕ! Признак операции-перемещения - movement_flag
+                is_movement_flag_error = False
+                movement_flag_str = row.get('movement_flag', None)
+                movement_flag = None
+                transaction_loading_log[log_idx][3]['movement_flag'] = {'value': movement_flag_str}
+                if movement_flag_str.lower() in ['0', 'false', 'f', 'нет', 'н']:
+                    movement_flag = False
+                elif movement_flag_str.lower() in ['1', 'true', 't', 'да', 'д']:
+                    movement_flag = True
+                else:
+                    is_movement_flag_error = True
+                    transaction_loading_log[log_idx][3]['movement_flag']['error'] = 'ошибка логического значения'
+                    transaction_loading_log[log_idx][3]['movement_flag']['tip'] = 'Допустимые значения:<br>' \
+                                                                                  '0, Нет, False, 1, Да, True'
+
+                # 4. ОБЯЗАТЕЛЬНОЕ ПОЛЕ! Категория операции - category
+                is_category_error = False
+                category_str = row.get('category', '')
+                category = None
+                transaction_loading_log[log_idx][3]['category'] = {'value': category_str}
+                if not movement_flag:
+                    try:
+                        category = Category.objects.get(name=category_str)
+                        if not category.parent:
+                            category = None
+                            raise
+                    except Exception as e:
+                        is_category_error = True
+                        transaction_loading_log[log_idx][3]['category']['error'] = 'категория не найдена'
+                        transaction_loading_log[log_idx][3]['category']['tip'] = \
+                            'Допустимые значения<br>смотри&nbsp;<a href="/static/main/upload/hamsterock-loading.xlsx"' \
+                            ' download="hamsterock-loading">здесь</a>'
+
+                # 5. Объект бюджета - budget_object
+                is_budget_object_error = False
+                budget_object_str = row.get('budget_object', '')
+                budget_object = None
+                budget_object_created = None
+                if budget_object_str:
+                    transaction_loading_log[log_idx][3]['budget_object'] = {'value': budget_object_str}
+                    try:
+                        budget_object, budget_object_created = BudgetObject.objects.get_or_create(
+                            budget_id=account.budget_id, name=budget_object_str)
+                    except Exception as e:
+                        is_budget_object_error = True
+                        transaction_loading_log[log_idx][3]['budget_object']['error'] = \
+                            'объект бюджета не был найден<br>и не смог создаться'
+                        transaction_loading_log[log_idx][3]['budget_object']['tip'] = 'Обратитесь к администратору'
+
+                # В случае, когда получили валидную категорию (базовую) и валидный непустой объект бюджета нужно
+                # получить категорию с бюджетным объектом (это отдельная строка в списке категорий)
+                # Вызываем Category.get_category_with_object(), которая либо вернет уже существующую категорию,
+                # либо вновь созданную
+                if not is_category_error and not is_budget_object_error and budget_object:
+                    try:
+                        c_id = Category.get_category_with_object(account.budget, category.pk,
+                                                                 budget_object.pk, request.user)
+                        category = Category.objects.get(pk=c_id)
+                    except Exception as e:
+                        pass
+
+                # На основе значений признака операции-перемещения и типа категории вычисляем тип операции
+                if amount_acc_cur is None or movement_flag is None:
+                    transaction_type = None
+                elif movement_flag:
+                    transaction_type = 'MO+' if amount_acc_cur >= 0 else 'MO-'
+                elif category is None:
+                    transaction_type = None
+                else:
+                    transaction_type = 'CRE' if category.type == 'INC' else 'DEB'
+                transaction_loading_log[log_idx][2] = {'value': transaction_type}
+
+                # 6. Валюта операции - currency
+                is_currency_error = False
+                currency_str = row.get('currency', '')
+                currency = None
+                if currency_str:
+                    transaction_loading_log[log_idx][3]['currency'] = {'value': currency_str}
+                    try:
+                        currency = Currency.objects.get(iso_code=currency_str)
+                    except Exception as e:
+                        is_category_error = True
+                        transaction_loading_log[log_idx][3]['currency']['error'] = 'валюта не найдена'
+                        transaction_loading_log[log_idx][3]['currency']['tip'] = \
+                            'Допустимые значения<br>смотри&nbsp;<a href="/static/main/upload/hamsterock-loading.xlsx"' \
+                            ' download="hamsterock-loading">здесь</a>'
+                else:
+                    currency = account.currency
+
+                # 7. Сумма операции в валюте операции - amount
+                is_amount_error = False
+                amount_str = row.get('amount', '')
+                amount = None
+                if amount_str:
+                    amount_str = amount_str.replace(' ', '')
+                    amount_str = amount_str.replace(',', '.')
+                    transaction_loading_log[log_idx][3]['amount'] = {'value': amount_str}
+                    try:
+                        amount = ftod(amount_str, 2)
+                    except Exception as e:
+                        is_amount_error = True
+                        transaction_loading_log[log_idx][3]['amount']['error'] = 'ошибка значения суммы'
+                        transaction_loading_log[log_idx][3]['amount']['tip'] = 'Допускаются цифры, минус,<br>' \
+                                                                               'точка или запятая'
+                else:
+                    if amount_acc_cur:
+                        if currency == account.currency or currency is None or time_transaction is None:
+                            amount = ftod(amount_acc_cur, 2)
+                        else:
+                            amount = ftod(amount_acc_cur *
+                                          CurrencyRate.get_rate(currency, account.currency, time_transaction), 2)
+
+                # 8. Проект - project
+                is_project_error = False
+                project_str = row.get('project', '')
+                project = None
+                if project_str:
+                    transaction_loading_log[log_idx][3]['project'] = {'value': project_str}
+                    try:
+                        project, project_created = Project.objects.get_or_create(budget_id=account.budget_id,
+                                                                                 name=project_str)
+                    except Exception as e:
+                        is_project_error = True
+                        transaction_loading_log[log_idx][3]['project']['error'] = 'проект не был найден<br>' \
+                                                                                  'и не смог создаться'
+                        transaction_loading_log[log_idx][3]['project']['tip'] = 'Обратитесь к администратору'
+
+                # 9. Год периода бюджета - budget_year
+                is_budget_year_error = False
+                budget_year_str = row.get('budget_year', '')
+                budget_year = None
+                if budget_year_str:
+                    transaction_loading_log[log_idx][3]['budget_year'] = {'value': budget_year_str}
+                    try:
+                        budget_year = int(budget_year_str)
+                        if not (MIN_BUDGET_YEAR <= budget_year <= MAX_BUDGET_YEAR):
+                            budget_year = None
+                            raise
+                    except Exception as e:
+                        is_budget_year_error = True
+                        transaction_loading_log[log_idx][3]['budget_year']['error'] = 'ошибка значения года'
+                        transaction_loading_log[log_idx][3]['budget_year']['tip'] = \
+                            f"Допускаются целые числа<br>в интервале от {MIN_BUDGET_YEAR} до {MAX_BUDGET_YEAR}"
+                else:
+                    try:
+                        budget_year = time_transaction.year
+                    except Exception as e:
+                        budget_year = None
+
+                # 10. Месяц периода бюджета - budget_month
+                is_budget_month_error = False
+                budget_month_str = row.get('budget_month', '')
+                budget_month = None
+                if budget_month_str:
+                    transaction_loading_log[log_idx][3]['budget_month'] = {'value': budget_month_str}
+                    try:
+                        budget_month = int(budget_month_str)
+                        if not (1 <= budget_month <= 12):
+                            budget_month = None
+                            raise
+                    except Exception as e:
+                        is_budget_month_error = True
+                        transaction_loading_log[log_idx][3]['budget_month']['error'] = 'ошибка значения месяца'
+                        transaction_loading_log[log_idx][3]['budget_month']['tip'] = 'Допускаются целые числа<br>' \
+                                                                                     'в интервале от 1 до 12'
+                else:
+                    try:
+                        budget_month = time_transaction.month
+                    except Exception as e:
+                        budget_month = None
+
+                # 11. Описание операции от банка - bank_description
+                bank_description = row.get('bank_description', None)
+                if bank_description:
+                    transaction_loading_log[log_idx][3]['bank_description'] = {'value': bank_description}
+
+                # 12. Категория операции от банка - bank_category
+                bank_category = row.get('bank_category', None)
+                if bank_category:
+                    transaction_loading_log[log_idx][3]['bank_category'] = {'value': bank_category}
+
+                # 13. MCC код от банка - mcc_code
+                mcc_code = row.get('mcc_code', None)
+                if mcc_code:
+                    transaction_loading_log[log_idx][3]['mcc_code'] = {'value': mcc_code}
+
+                # 14. Место совершения операции - place
+                place = row.get('place', None)
+                if place:
+                    transaction_loading_log[log_idx][3]['place'] = {'value': place}
+
+                # 15. Описание операции - description
+                description = row.get('description', None)
+                if description:
+                    transaction_loading_log[log_idx][3]['description'] = {'value': description}
+
+                # Развилка по наличию ошибок или их отсутствию
+                if not (is_time_transaction_error or is_amount_acc_cur_error or is_movement_flag_error or
+                        is_category_error or is_currency_error or is_amount_error or is_project_error or
+                        is_budget_year_error or is_budget_month_error):
+                    # Ошибок нет
+                    budget = account.budget
+                    user_create = request.user
+                    user_update = request.user
+
+                    # Посмотрим есть ли такая операция уже в системе (время + тип + сумма)
+                    exist_the_same_transactions = \
+                        Transaction.objects.filter(budget_id=budget.pk, account_id=account.pk,
+                                                   time_transaction=time_transaction, type=transaction_type,
+                                                   amount_acc_cur=amount_acc_cur)
+                    if exist_the_same_transactions:
+                        transaction_loading_log[log_idx][2]['error'] = 'такая операция<br>уже существует'
+                        transaction_loading_log[log_idx][0] = 0
+                    else:
+                        # Такой операции нет - создаем ее и категорию к ней
+                        try:
+                            with transaction.atomic():
+                                new_transaction = Transaction()
+                                new_transaction.budget = budget
+                                new_transaction.account = account
+                                new_transaction.type = transaction_type
+                                new_transaction.time_transaction = time_transaction
+                                new_transaction.time_zone = time_zone
+                                new_transaction.amount_acc_cur = amount_acc_cur
+                                new_transaction.currency = currency
+                                new_transaction.amount = amount
+                                new_transaction.budget_year = budget_year
+                                new_transaction.budget_month = budget_month
+                                new_transaction.place = place
+                                new_transaction.description = description
+                                new_transaction.mcc_code = mcc_code
+                                new_transaction.banks_category = bank_category
+                                new_transaction.banks_description = bank_description
+                                new_transaction.project = project
+                                new_transaction.user_create = user_create
+                                new_transaction.user_update = user_update
+                                new_transaction.save()
+                                if transaction_type in ['CRE', 'DEB']:
+                                    new_transaction_category = TransactionCategory()
+                                    new_transaction_category.transaction = new_transaction
+                                    new_transaction_category.category = category
+                                    new_transaction_category.amount_acc_cur = amount_acc_cur
+                                    new_transaction_category.budget_year = budget_year
+                                    new_transaction_category.budget_month = budget_month
+                                    new_transaction_category.project = project
+                                    new_transaction_category.save()
+                                transaction_loading_log[log_idx][0] = 1
+                        except Exception as e:
+                            transaction_loading_log[log_idx][2]['error'] = 'операция не смогла<br>быть загружена'
+                            transaction_loading_log[log_idx][0] = 0
+                else:
+                    transaction_loading_log[log_idx][0] = 0
+
+                row_idx += 1
+
+            # Если не было ошибки на уровне наличия обязательных полей в файле, то показываем пользователю лог загрузки
+            if not is_error:
+                return render(request, 'main/transaction_loading_log.html',
+                              get_u_context(request,
+                                            {'title': 'Протокол загрузки операций из файла по счету/кошельку - ' +
+                                                      str(account),
+                                             'file': request.FILES['transactions_file'].name,
+                                             'header_loading_log': transaction_loading_log[0],
+                                             'transaction_loading_log': transaction_loading_log[1:],
+                                             'work_menu': True,
+                                             'account_selected': account.id,
+                                             'selected_menu': 'account_transactions',
+                                             'return_url': return_url}))
+    else:
+        form = LoadTransactionForm(account=account)
+
+    last_transactions = \
+        Transaction.objects.filter(budget_id=account.budget.pk, account_id=account.pk).exclude(
+            type__in=['ED+', 'ED-']).order_by('-time_transaction')[:3]
+
+    return render(request, 'main/transaction_load.html',
+                  get_u_context(request,
+                                {'title': 'Загрузка операций из файла по счету/кошельку - ' + str(account),
+                                 'form': form,
+                                 'account_balance': account.balance,
+                                 'account_available_balance': account.balance + account.credit_limit,
+                                 'account_credit_limit': account.credit_limit,
+                                 'account_type': account.type,
+                                 'account_budget': account.budget.pk,
+                                 'account_currency_id': account.currency.pk,
+                                 'account_currency_iso': account.currency.iso_code,
+                                 'last_transactions': last_transactions,
+                                 'work_menu': True,
+                                 'account_selected': account.id,
+                                 'selected_menu': 'account_transactions',
+                                 'return_url': return_url}))

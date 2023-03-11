@@ -1,0 +1,44 @@
+{% extends 'main/base.html' %}
+{% load main_tags %}
+{% load static %}
+
+{% block content %}
+<h1>{{title}}</h1>
+<p>
+    <label class="form-label">Файл: <strong>{{ file }}</strong></label>
+</p>
+<p></p>
+<table class="table-log">
+    <tr>
+        {% for header in header_loading_log %}
+        <th>{{ header }}</th>
+        {% endfor %}
+    </tr>
+    {% for log in transaction_loading_log %}
+    <tr>
+        {% get_list_item log 0 as log_status %}
+        {% get_list_item log 1 as log_row_id %}
+        {% get_list_item log 2 as log_type %}
+        {% get_list_item log 3 as log_fields %}
+        {% for header in header_loading_log %}
+        <td>
+            {% if header == 'Статус' %}
+            <img src="/static/main/images/{% if log_status %}ok-colored{% else %}cancel-colored{% endif %}.png" style="max-height:14px">
+            {% elif header == '№' %}
+            {{ log_row_id }}
+            {% elif header == 'Тип' %}
+            {% get_value_from_dict log_type 'value' as field_value %}{% if not field_value|isnull %}{{ field_value }}{% endif %}
+            {% get_value_from_dict log_type 'error' as field_error %}{% if field_error %}<p class="error">{% autoescape off %}{% strong_str field_error %}{% endautoescape %}</p>{% endif %}
+            {% else %}
+            {% get_value_from_dict log_fields header 'value' as field_value %}{% if not field_value|isnull %}{{ field_value }}{% endif %}
+            {% get_value_from_dict log_fields header 'error' as field_error %}{% if field_error %}<p class="error">{% autoescape off %}{% strong_str field_error %}{% endautoescape %}</p>{% endif %}
+            {% get_value_from_dict log_fields header 'tip' as field_tip %}{% if field_tip %}<p class="tip">{% autoescape off %}{% strong_str field_tip %}{% endautoescape %}</p>{% endif %}
+            {% endif %}
+        </td>
+        {% endfor %}
+    </tr>
+    {% endfor %}
+</table>
+<p></p>
+<a href="{{ return_url }}"><input type="button" value="Возврат"></a> <a href="{% url 'load_transactions' account_selected return_url %}"><input type="button" value="Загрузить еще"></a>
+{% endblock %}

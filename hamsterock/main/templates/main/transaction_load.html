@@ -1,0 +1,166 @@
+{% extends 'main/base.html' %}
+{% load main_tags %}
+{% load static %}
+
+{% block scripts %}
+<script>
+function change_are_field_headers(f) {
+    let elsT;
+    if (f.are_field_headers.selectedIndex == 0) {
+        elsT = document.querySelectorAll('[id^="p_id_header_field"]');
+        for (let el of elsT) {
+            el.style.display = "none";
+        }
+        elsT = document.querySelectorAll('[id^="pe_id_header_field"]');
+        for (let el of elsT) {
+            el.style.display = "none";
+        }
+        elsT = document.querySelectorAll('[id^="ph_id_header_field"]');
+        for (let el of elsT) {
+            el.style.display = "none";
+        }
+    } else {
+        elsT = document.querySelectorAll('[id^="p_id_header_field"]');
+        for (let el of elsT) {
+            el.style.display = "";
+        }
+        elsT = document.querySelectorAll('[id^="pe_id_header_field"]');
+        for (let el of elsT) {
+            el.style.display = "";
+        }
+        elsT = document.querySelectorAll('[id^="ph_id_header_field"]');
+        for (let el of elsT) {
+            el.style.display = "";
+        }
+    }
+}
+</script>
+{% endblock %}
+
+{% block content %}
+<h1>{{title}}</h1>
+<p>
+{% if account_credit_limit != 0 %}
+    <label class="form-label" style="min-width: 100px" for="id_available_balance">Доступный остаток (<strong>{{ account_currency_iso }}</strong>): </label>
+    <input id="id_available_balance" type="text" name="available_balance" value="{{ account_available_balance|floatformat:"2g" }}" class="form-input-small" readonly id="id_available_balance">&ensp;
+    <label class="form-label" style="min-width: 100px" for="id_balance">Истинный остаток (<strong>{{ account_currency_iso }}</strong>): </label>
+    <input id="id_balance" type="text" name="balance" value="{{ account_balance|floatformat:"2g" }}" class="form-input-small" readonly id="id_balance">&ensp;
+    <label class="form-label" style="min-width: 100px" for="id_credit_limit">Кредитный лимит (<strong>{{ account_currency_iso }}</strong>): </label>
+    <input id="id_credit_limit" type="text" name="credit_limit" value="{{ account_credit_limit|floatformat:"2g" }}" class="form-input-small" readonly id="id_credit_limit">
+{% else %}
+    <label class="form-label" for="id_available_balance">Доступный остаток (<strong>{{ account_currency_iso }}</strong>): </label>
+    <input type="text" name="available_balance" value="{{ account_available_balance|floatformat:"2g" }}" class="form-input-small" readonly id="id_available_balance">
+{% endif %}
+</p>
+<p><strong>ПОСЛЕДНИЕ ОПЕРАЦИИ:</strong></p>
+<table class="table-transaction">
+    <tr>
+        <th>ДАТА-ВРЕМЯ UTC</th>
+        <th>ПРИХОД</th>
+        <th>РАСХОД</th>
+        <th>ОСТАТОК</th>
+        <th>ПЕРИОД</th>
+        <th>КАТЕГОРИЯ</th>
+        <th>ЛОКАЦИЯ И ОПИСАНИЕ ОПЕРАЦИИ</th>
+        <th>ИНФОРМАЦИЯ ОТ БАНКА</th>
+        <th>ПРОЕКТ</th>
+    </tr>
+    {% for t in last_transactions %}
+    <tr>
+        <td>{{ t.time_transaction|date:"SHORT_DATETIME_FORMAT" }}</td>
+
+        {% if t.type == 'CRE' or t.type == 'MO+' %}
+            {% if t.currency.id == account_currency_id %}
+        <td>{{ t.amount_acc_cur|floatformat:"2g" }}
+            {% else %}
+        <td>{{ t.amount_acc_cur|floatformat:"2g" }}<br><span style="color: #888">({{ t.currency.iso_code|lower }}: {{ t.amount|floatformat:"2g" }})</span>
+            {% endif %}
+        </td>
+        {% else %}
+        <td></td>
+        {% endif %}
+
+        {% if t.type == 'DEB' or t.type == 'MO-' %}
+            {% if t.currency.id == account_currency_id %}
+        <td>{{ t.amount_acc_cur|negative|floatformat:"2g" }}
+            {% else %}
+        <td>{{ t.amount_acc_cur|negative|floatformat:"2g" }}<br><span style="color: #888">({{ t.currency.iso_code|lower }}: {{ t.amount|negative|floatformat:"2g" }})</span>
+            {% endif %}
+        </td>
+        {% else %}
+        <td></td>
+        {% endif %}
+
+        {% if t.time_transaction < t.account.balances_valid_until %}
+        <td>{{ t.balance_acc_cur|floatformat:"2g" }}</td>
+        {% else %}
+        <td><span style="text-decoration: line-through; color: #CC0000">{{ t.balance_acc_cur|floatformat:"2g" }}</span></td>
+        {% endif %}
+
+        <td>{% getperiod t.budget_year t.budget_month %}</td>
+
+        {% if t.type == 'DEB' or t.type == 'CRE' %}
+            {% getcats t as cs %}
+        <td>
+            {% if cs.category_quantity == 0 %}
+            <span>Категория не задана</span>
+            {% else %}
+                {% if cs.sum_amount != t.amount_acc_cur %}
+            <span style="color: #CC0000">
+                {% else %}
+            <span>
+                {% endif %}
+                {% for c in cs.category_list %}
+                    {{ c }}<br>
+                {% endfor %}
+            </span>
+            {% endif %}
+        </td>
+        {% elif t.type == 'MO+' %}
+            {% if t.sender %}
+        <td>Перемещение из {{ t.sender.account.name }} ({{ t.sender.account.currency.iso_code }})<br>
+            ({{ t.sender.time_transaction|date:"SHORT_DATETIME_FORMAT" }} {{ t.sender.currency.iso_code|lower }}: {{ t.sender.amount|negative|floatformat:"2g" }})&nbsp;
+        </td>
+            {% else %}
+        <td>Перемещение из <span style="color: #CC0000">(!!! связь с операцией-источником не установлена !!!)</span></td>
+            {% endif %}
+        {% else %}
+            {% if t.receiver %}
+        <td>Перемещение в {{ t.receiver.account.name }} ({{ t.receiver.account.currency.iso_code }})<br>
+            ({{ t.receiver.time_transaction|date:"SHORT_DATETIME_FORMAT" }} {{ t.receiver.currency.iso_code|lower }}: {{ t.receiver.amount|floatformat:"2g" }})&nbsp;
+        </td>
+            {% else %}
+        <td>Перемещение в <span style="color: #CC0000">(!!! связь с операцией-получателем не установлена !!!)</span></td>
+            {% endif %}
+        {% endif %}
+
+        <td>{% if t.place %}{{ t.place }} {% endif %}{% if t.description %}{{ t.description }}{% endif %}</td>
+
+        {% if account_type != 'WAL' and account_type != 'SAF' and account_type != 'SAB' and account_type != 'STA' %}
+        <td>{% if t.mcc_code %}МСС: {{ t.mcc_code }} {% endif %}{% if t.banks_category %}Кат: {{ t.banks_category }} {% endif %}{% if t.banks_description %}Описание: {{ t.banks_description }}{% endif %}</td>
+        {% else %}
+        <td></td>
+        {% endif %}
+
+        <td>{% if t.project %}{{ t.project }}{% endif %}</td>
+
+    </tr>
+    {% endfor %}
+</table>
+
+<p><strong>ОПЦИИ ЗАГРУЗКИ:</strong></p>
+<form method="post" enctype="multipart/form-data">
+    {% csrf_token %}
+    <div class="form-error">{{ form.non_field_errors }}</div>
+    {% for f in form %}
+        {% get_field_name_without_suffix f.id_for_label as id_lab %}
+    <p class="form-p" id="p_{{ f.id_for_label }}"{% if form.are_field_headers.value == '1' and id_lab == 'id_header_field' %} style="display: none;"{% endif %}><label class="form-label" for="p_{{ f.id_for_label }}">{{ f.label }}: </label>{{ f }}</p>
+        {% if f.help_text %}
+    <p class="form-p-help" id="ph_{{ f.id_for_label }}"><label class="form-label-help" for="ph_{{ f.id_for_label }}">{% autoescape off %}{{ f.help_text }}{% endautoescape %}</label></p>
+        {% endif %}
+    <div id="pe_{{ f.id_for_label }}" class="form-error">{{ f.errors }}</div>
+    {% endfor %}
+    <p> </p>
+    <button type="submit">Загрузить операции</button> <a href="{{ return_url }}"><input type="button" value="Отмена"></a>
+</form>
+{% endblock %}

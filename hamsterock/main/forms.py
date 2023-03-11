@@ -775,3 +775,146 @@ class JoinConfirmationForm(forms.Form):
                                             widget=forms.NumberInput(attrs={'readonly': 'readonly'}))
     new_amount_acc_cur = forms.DecimalField(label='new_amount_acc_cur',
                                             widget=forms.NumberInput(attrs={'readonly': 'readonly'}))
+
+
+class LoadTransactionForm(forms.Form):
+    transactions_file = forms.FileField(label='Файл с операциями',
+                                        widget=forms.FileInput(attrs={'class': 'form-input', 'accept': '.csv'}))
+    transactions_time_zone = forms.ChoiceField(label='Часовой пояс операций',
+                                               widget=forms.Select(attrs={'class': 'form-input'}),
+                                               choices=TIME_ZONES,
+                                               initial=ftod(0.00, 2))
+    column_delimiter = forms.ChoiceField(label='Символ-разделитель',
+                                         widget=forms.Select(attrs={'class': 'form-input'}),
+                                         choices=[(';', 'Точка с запятой'), (',', 'Запятая'), ('\t', 'Знак табуляции')],
+                                         initial=';')
+    string_delimiter = forms.ChoiceField(label='Ограничитель строк',
+                                         widget=forms.Select(attrs={'class': 'form-input'}),
+                                         choices=[(None, 'Нет'), ('"', '"'), ("'", "'")],
+                                         initial=None,
+                                         required=False)
+    are_field_headers = forms.ChoiceField(label='Заголовки полей',
+                                          widget=forms.Select(
+                                              attrs={'class': 'form-input',
+                                                     'onchange': 'change_are_field_headers(this.form)'}),
+                                          choices=[('1', 'Есть в файле'), ('0', 'Задаются вручную:')],
+                                          initial='1',
+                                          required=False,
+                                          help_text='ВАЖНО! Список полей, их обязательность и описание смотри '
+                                                    '<a href="/static/main/upload/hamsterock-loading.xlsx" '
+                                                    'download="hamsterock-loading">здесь</a>'
+                                          )
+    header_field_1 = forms.ChoiceField(label='Поле 1',
+                                       widget=forms.Select(attrs={'class': 'form-input'}),
+                                       choices=TRANSACTION_FIELDS,
+                                       required=False)
+    header_field_2 = forms.ChoiceField(label='Поле 2',
+                                       widget=forms.Select(attrs={'class': 'form-input'}),
+                                       choices=TRANSACTION_FIELDS,
+                                       required=False)
+    header_field_3 = forms.ChoiceField(label='Поле 3',
+                                       widget=forms.Select(attrs={'class': 'form-input'}),
+                                       choices=TRANSACTION_FIELDS,
+                                       required=False)
+    header_field_4 = forms.ChoiceField(label='Поле 4',
+                                       widget=forms.Select(attrs={'class': 'form-input'}),
+                                       choices=TRANSACTION_FIELDS,
+                                       required=False)
+    header_field_5 = forms.ChoiceField(label='Поле 5',
+                                       widget=forms.Select(attrs={'class': 'form-input'}),
+                                       choices=TRANSACTION_FIELDS,
+                                       required=False)
+    header_field_6 = forms.ChoiceField(label='Поле 6',
+                                       widget=forms.Select(attrs={'class': 'form-input'}),
+                                       choices=TRANSACTION_FIELDS,
+                                       required=False)
+    header_field_7 = forms.ChoiceField(label='Поле 7',
+                                       widget=forms.Select(attrs={'class': 'form-input'}),
+                                       choices=TRANSACTION_FIELDS,
+                                       required=False)
+    header_field_8 = forms.ChoiceField(label='Поле 8',
+                                       widget=forms.Select(attrs={'class': 'form-input'}),
+                                       choices=TRANSACTION_FIELDS,
+                                       required=False)
+    header_field_9 = forms.ChoiceField(label='Поле 9',
+                                       widget=forms.Select(attrs={'class': 'form-input'}),
+                                       choices=TRANSACTION_FIELDS,
+                                       required=False)
+    header_field_10 = forms.ChoiceField(label='Поле 10',
+                                        widget=forms.Select(attrs={'class': 'form-input'}),
+                                        choices=TRANSACTION_FIELDS,
+                                        required=False)
+    header_field_11 = forms.ChoiceField(label='Поле 11',
+                                        widget=forms.Select(attrs={'class': 'form-input'}),
+                                        choices=TRANSACTION_FIELDS,
+                                        required=False)
+    header_field_12 = forms.ChoiceField(label='Поле 12',
+                                        widget=forms.Select(attrs={'class': 'form-input'}),
+                                        choices=TRANSACTION_FIELDS,
+                                        required=False)
+    header_field_13 = forms.ChoiceField(label='Поле 13',
+                                        widget=forms.Select(attrs={'class': 'form-input'}),
+                                        choices=TRANSACTION_FIELDS,
+                                        required=False)
+    header_field_14 = forms.ChoiceField(label='Поле 14',
+                                        widget=forms.Select(attrs={'class': 'form-input'}),
+                                        choices=TRANSACTION_FIELDS,
+                                        required=False)
+    header_field_15 = forms.ChoiceField(label='Поле 15',
+                                        widget=forms.Select(attrs={'class': 'form-input'}),
+                                        choices=TRANSACTION_FIELDS,
+                                        required=False)
+    header_field_16 = forms.ChoiceField(label='Поле 16',
+                                        widget=forms.Select(attrs={'class': 'form-input'}),
+                                        choices=TRANSACTION_FIELDS,
+                                        required=False)
+    header_field_17 = forms.ChoiceField(label='Поле 17',
+                                        widget=forms.Select(attrs={'class': 'form-input'}),
+                                        choices=TRANSACTION_FIELDS,
+                                        required=False)
+    header_field_18 = forms.ChoiceField(label='Поле 18',
+                                        widget=forms.Select(attrs={'class': 'form-input'}),
+                                        choices=TRANSACTION_FIELDS,
+                                        required=False)
+    header_field_19 = forms.ChoiceField(label='Поле 19',
+                                        widget=forms.Select(attrs={'class': 'form-input'}),
+                                        choices=TRANSACTION_FIELDS,
+                                        required=False)
+    header_field_20 = forms.ChoiceField(label='Поле 20',
+                                        widget=forms.Select(attrs={'class': 'form-input'}),
+                                        choices=TRANSACTION_FIELDS,
+                                        required=False)
+    headers = []
+
+    def __init__(self, account, *args, **kwargs):
+        super(LoadTransactionForm, self).__init__(*args, **kwargs)
+        self.fields['transactions_time_zone'].initial = ftod(account.time_zone, 2)
+
+    def clean(self):
+        result = super(LoadTransactionForm, self).clean()
+
+        if self.cleaned_data.get('are_field_headers', 1) == '0':
+            self.headers = []
+            for idx in range(1, 21):
+                field_name = 'header_field_' + str(idx)
+                header = self.cleaned_data.get(field_name, None)
+                if header:
+                    if header in self.headers:
+                        self.add_error(field_name, forms.ValidationError('Заголовки полей не должны дублироваться!'))
+                    self.headers.append(header)
+                else:
+                    self.headers.append('column_' + str(idx))
+            while len(self.headers):
+                if self.headers[len(self.headers) - 1] == 'column_' + str(len(self.headers)):
+                    self.headers.pop()
+                else:
+                    break
+            if not self.headers:
+                self.add_error('are_field_headers', forms.ValidationError('Необходимо указать заголовки полей'))
+            else:
+                for trf in TRANSACTION_REQUIRED_FIELDS:
+                    if trf[0] not in self.headers:
+                        self.add_error('are_field_headers',
+                                       forms.ValidationError('Необходимо указать обязательное поле - ' + trf[1]))
+
+        return result

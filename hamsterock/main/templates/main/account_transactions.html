@@ -17,7 +17,7 @@
     <input type="text" name="available_balance" value="{{ account_available_balance|floatformat:"2g" }}" class="form-input-small" readonly id="id_available_balance">
 {% endif %}
 </p>
-<a href="{% url 'add_transaction' account_selected request.get_full_path %}"><input type="button" value="Добавить операцию"></a>{% comment %} <a href="{% url 'load_transactions' account_selected request.get_full_path %}"><input type="button" value="Загрузить операции из файла"></a>{% endcomment %} <a href="{% url 'balances_recalculation' account_budget request.get_full_path %}"><input type="button" value="Пересчитать остатки"></a>
+<a href="{% url 'add_transaction' account_selected request.get_full_path %}"><input type="button" value="Добавить операцию"></a> <a href="{% url 'load_transactions' account_selected request.get_full_path %}"><input type="button" value="Загрузить операции из файла"></a> <a href="{% url 'balances_recalculation' account_budget request.get_full_path %}"><input type="button" value="Пересчитать остатки"></a>
 <p> </p>
 <table class="table-transaction">
     <tr>
