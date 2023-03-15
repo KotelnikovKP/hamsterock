@@ -42,6 +42,16 @@ def about(request):
     return render(request, 'main/about.html',
                   get_u_context(request, {'title': 'О сервисе "Хомячок - управление личным бюджетом!"',
                                           'selected_menu': 'about',
+                                          'DEFAULT_BASE_CURRENCY_1': DEFAULT_BASE_CURRENCY_1,
+                                          'DEFAULT_BASE_CURRENCY_2': DEFAULT_BASE_CURRENCY_2,
+                                          'MIN_BUDGET_YEAR': MIN_BUDGET_YEAR,
+                                          'MAX_BUDGET_YEAR': MAX_BUDGET_YEAR,
+                                          'DEFAULT_MINUTES_DELTA_FOR_NEW_TRANSACTION':
+                                              DEFAULT_MINUTES_DELTA_FOR_NEW_TRANSACTION,
+                                          'POSITIVE_EXCHANGE_DIFFERENCE': POSITIVE_EXCHANGE_DIFFERENCE,
+                                          'NEGATIVE_EXCHANGE_DIFFERENCE': NEGATIVE_EXCHANGE_DIFFERENCE,
+                                          'DEFAULT_INC_CATEGORY': DEFAULT_INC_CATEGORY,
+                                          'DEFAULT_EXP_CATEGORY': DEFAULT_EXP_CATEGORY,
                                           },))
 
 
