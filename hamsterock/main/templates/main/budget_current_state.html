@@ -122,6 +122,27 @@ function close_project(t) {
     at.style.display = "";
 }
 
+function cell_mouse_over(t) {
+    el_item = document.querySelector('[id="' + t.dataset.node + '"]');
+    t.dataset.prev_item_color = el_item.style.color;
+    if ( el_item.style.color == "rgb(136, 37, 0)" ) {
+        new_color = "crimson";
+    } else {
+        new_color = "dodgerblue";
+    }
+    el_item.style.color = new_color;
+    el_month = document.querySelector('[id="head-' + t.dataset.month + '"]');
+    t.dataset.prev_month_color = el_month.style.color;
+    el_month.style.color = new_color;
+}
+
+function cell_mouse_out(t) {
+    el_item = document.querySelector('[id="' + t.dataset.node + '"]');
+    el_item.style.color = t.dataset.prev_item_color;
+    el_month = document.querySelector('[id="head-' + t.dataset.month + '"]');
+    el_month.style.color = t.dataset.prev_month_color;
+}
+
 </script>
 {% endblock %}
 
@@ -203,7 +224,7 @@ function close_project(t) {
         <th>СТАТЬЯ</th>
         {% for y, m in months %}
         <th> </th>
-        {% getperiod y m as p %}<th>{% autoescape off %}{% strong_str p %}{% endautoescape %}</th>
+        {% getperiod y m as p %}<th id="head-({{ y }}, {{ m }})">{% autoescape off %}{% strong_str p %}{% endautoescape %}</th>
         {% endfor %}
         <th>ПЛАН</th>
         <th>%&nbsp;ИСП</th>
@@ -262,9 +283,9 @@ function close_project(t) {
             {% get_node_id dir cat_id cat_parent_id as node_id %}
     <tr id="{{ node_id }}" class="{% if cat_id == 0 %}lvl1{% elif cat_parent_id == 0 %}lvl2{% else %}lvl3{% endif %}" style="{% if cat_id != 0 and cat_parent_id != 0 and cat_parent_id != expanded_category_id or cat_is_empty %}display:none;{% endif %}{% if dir == 'inc' %} color: #005988;{% else %} color: #882500;{% endif %}" data-id="{{ cat_id }}" data-parentid="{{ cat_parent_id }}" data-budgetid="{{ budget_id }}" data-dir="{{ dir }}" data-type="all" data-isempty="{{ cat_is_empty }}">
         <td>{% if cat_id != 0 and cat_parent_id == 0 %}<img id="{{ node_id }}e" src="{% static 'main/images/tr-right.png' %}" style="max-height:8px;{% if cat_is_empty or cat_id == expanded_category_id %} display:none;{% endif %}" onclick="expand_children_category(this)"><img id="{{ node_id }}c" src="{% static 'main/images/tr-down.png' %}" style="max-height:8px;{% if not cat_is_empty and cat_id != expanded_category_id %} display:none;{% endif %}" onclick="close_children_category(this)">{% endif %}</td>
-        <td>{{cat_item}}</td>
+        <td id="{{ node_id }}-item">{{cat_item}}</td>
         <td><img id="{{ node_id }}ee" src="{% if cat_summary_project_actual_value or cat_summary_project_planned_value %}{% static 'main/images/tr-right.png' %}{% else %}{% static 'main/images/tr-right-light.png' %}{% endif %}" style="max-height:8px" onclick="expand_children_item(this)"><img id="{{ node_id }}cc" src="{% if cat_summary_project_actual_value or cat_summary_project_planned_value %}{% static 'main/images/tr-down.png' %}{% else %}{% static 'main/images/tr-down-light.png' %}{% endif %}" style="max-height:8px; display:none;" onclick="close_children_item(this)"></td>
-        <td>{% autoescape off %}{% strong_str cat_name %}{% endautoescape %}</td>
+        <td id="{{ node_id }}-name">{% autoescape off %}{% strong_str cat_name %}{% endautoescape %}</td>
             {% for m in months %}
                 {% get_value_from_dict cat_values m 'all' 'actual_value' as cat_month_all_actual_value %}
                 {% get_value_from_list m 0 as year %}
@@ -272,9 +293,9 @@ function close_project(t) {
                 {% get_path_wit_cat request.path cat_parent_id as path_with_cat %}
         <td></td>
                 {% if cat_id != 0 and cat_parent_id != 0 and cat_id != ped_cat and cat_id != ned_cat %}
-        <td id="{{ node_id }}-actual-all-{{ m }}"><a href="{% url 'account_transactions_in_category_period' budget_id cat_id year month base_currency_selected path_with_cat %}" style="{% if dir == 'inc' %} color: #005988;{% else %} color: #882500;{% endif %}" alt="Посмотреть операции" title="Посмотреть операции" id="{{ node_id }}-actual-all-{{ m }}-view" data-val="{{ cat_month_all_actual_value }}" data-month="{{ m }}">{{ cat_month_all_actual_value|floatformat:"2g" }}</a></td>
+        <td id="{{ node_id }}-actual-all-{{ m }}"><a href="{% url 'account_transactions_in_category_period' budget_id cat_id year month base_currency_selected path_with_cat %}" style="color: unset" alt="Посмотреть операции" title="Посмотреть операции" id="{{ node_id }}-actual-all-{{ m }}-view" data-val="{{ cat_month_all_actual_value }}" data-month="{{ m }}" data-node="{{ node_id }}" onmouseover="cell_mouse_over(this)" onmouseout="cell_mouse_out(this)">{{ cat_month_all_actual_value|floatformat:"2g" }}</a></td>
                 {% else %}
-        <td id="{{ node_id }}-actual-all-{{ m }}"><span id="{{ node_id }}-actual-all-{{ m }}-view" data-val="{{ cat_month_all_actual_value }}" data-month="{{ m }}">{{ cat_month_all_actual_value|floatformat:"2g" }}</span></td>
+        <td id="{{ node_id }}-actual-all-{{ m }}"><span id="{{ node_id }}-actual-all-{{ m }}-view" data-val="{{ cat_month_all_actual_value }}" data-month="{{ m }}" data-node="{{ node_id }}" onmouseover="cell_mouse_over(this)" onmouseout="cell_mouse_out(this)">{{ cat_month_all_actual_value|floatformat:"2g" }}</span></td>
                 {% endif %}
             {% endfor %}
         <td id="{{ node_id }}-planned-all-summary"><span id="{{ node_id }}-planned-all-summary-view" data-val="{{ cat_summary_all_planned_value }}">{{ cat_summary_all_planned_value|floatformat:"2g" }}</span></td>
@@ -290,7 +311,7 @@ function close_project(t) {
             {% for m in months %}
                 {% get_value_from_dict cat_values m 'non_project' 'actual_value' as cat_month_non_project_actual_value %}
         <td></td>
-        <td id="{{ node_id }}-actual-non-project-{{ m }}"><span id="{{ node_id }}-actual-non-project-{{ m }}-view" data-val="{{ cat_month_non_project_actual_value }}" data-month="{{ m }}">{{ cat_month_non_project_actual_value|floatformat:"2g" }}</span></td>
+        <td id="{{ node_id }}-actual-non-project-{{ m }}"><span id="{{ node_id }}-actual-non-project-{{ m }}-view" data-val="{{ cat_month_non_project_actual_value }}" data-month="{{ m }}" data-node="{{ node_id }}" onmouseover="cell_mouse_over(this)" onmouseout="cell_mouse_out(this)">{{ cat_month_non_project_actual_value|floatformat:"2g" }}</span></td>
             {% endfor %}
         <td id="{{ node_id }}-planned-non-project-summary"><span id="{{ node_id }}-planned-non-project-summary-view" data-val="{{ cat_summary_non_project_planned_value }}">{{ cat_summary_non_project_planned_value|floatformat:"2g" }}</span></td>
         <td id="{{ node_id }}-percentage-non-project-summary" data-val="{{ cat_summary_non_project_execution_percentage }}">{{ cat_summary_non_project_execution_percentage|multiply:100|floatformat:"2g" }}%</td>
@@ -306,7 +327,7 @@ function close_project(t) {
                 {% get_value_from_dict cat_values m 'project' 'actual_value' as cat_month_project_actual_value %}
                 {% get_value_from_dict cat_values m 'projects' as cat_month_projects %}
         <td>{% if cat_month_projects %}<img id="{{ node_id }}-actual-project-{{ m }}pe" src="{% static 'main/images/tr-right.png' %}" style="max-height:8px" onclick="expand_project(this)"><img id="{{ node_id }}-actual-project-{{ m }}pc" src="{% static 'main/images/tr-down.png' %}" style="max-height:8px; display:none;" onclick="close_project(this)">{% endif %}</td>
-        <td id="{{ node_id }}-actual-project-{{ m }}"><span id="{{ node_id }}-actual-project-{{ m }}-view" data-val="{{ cat_month_project_actual_value }}" data-month="{{ m }}">{{ cat_month_project_actual_value|floatformat:"2g" }}</span>{% if cat_month_projects %}
+        <td id="{{ node_id }}-actual-project-{{ m }}"><span id="{{ node_id }}-actual-project-{{ m }}-view" data-val="{{ cat_month_project_actual_value }}" data-month="{{ m }}" data-node="{{ node_id }}" onmouseover="cell_mouse_over(this)" onmouseout="cell_mouse_out(this)">{{ cat_month_project_actual_value|floatformat:"2g" }}</span>{% if cat_month_projects %}
             <p id="{{ node_id }}-actual-project-{{ m }}pp" style="margin: 0px; display:none">
                 {% for pr_id, pr_dict in cat_month_projects.items %}
                     {% get_value_from_dict pr_dict 'name' as pr_name %}
