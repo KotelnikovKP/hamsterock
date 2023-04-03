@@ -56,9 +56,6 @@ def balance_round(balance, digit_rounding):
 
 DEFAULT_BUDGET_NAME = 'Бюджет семьи <ваша фамилия>'
 
-# DEFAULT_BASE_CURRENCY_1 = 97  # RUB
-# DEFAULT_BASE_CURRENCY_2 = 121  # USD
-
 TIME_ZONES = [
     (ftod(-12.0, 2), '(UTC-12:00) Линия перемены дат'),
     (ftod(-11.0, 2), '(UTC-11:00) Время в формате UTC -11'),
@@ -168,8 +165,6 @@ INVS_ACCOUNT = ('INA',)
 BUSN_ACCOUNT = ('BCA', 'BSA', 'BCU', 'BDC', 'BCC', 'BCR', 'BDE')
 ALL_CASH_ACCOUNT = ('WAL', 'SAF', 'SAB', 'STA', 'BCA', 'BSA')
 
-# MIN_BUDGET_YEAR = 2000
-# MAX_BUDGET_YEAR = 2100
 MIN_TRANSACTION_DATETIME = datetime(MIN_BUDGET_YEAR, 1, 1, 0, 0, 0, 0, timezone.utc)
 MAX_TRANSACTION_DATETIME = datetime(MAX_BUDGET_YEAR, 12, 31, 23, 59, 59, 999999, timezone.utc)
 
@@ -194,15 +189,7 @@ TRANSACTION_TYPES = [
     ('MO+', 'Перемещение приход'),
     ('MO-', 'Перемещение расход'),
 ]
-DEFAULT_TIME_DELTA = timedelta(1)  # +1 день
-
-# DEFAULT_MINUTES_DELTA_FOR_NEW_TRANSACTION = 5
-#
-# POSITIVE_EXCHANGE_DIFFERENCE = 13
-# NEGATIVE_EXCHANGE_DIFFERENCE = 16
-#
-# DEFAULT_INC_CATEGORY = 12
-# DEFAULT_EXP_CATEGORY = 15
+DEFAULT_TIME_DELTA = timedelta(1)
 
 TRANSACTION_FIELDS = [
     (None, '<поле не задано>'),
